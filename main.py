@@ -17,33 +17,46 @@ GROUP_ID = os.getenv("GROUP_ID")
 CALENDAR_ID = os.getenv("CALENDAR_ID") or "primary"
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
-def get_google_calendar_events():
+# 建立 Google Calendar service
+def get_calendar_service():
     credentials_info = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
     creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
     service = build('calendar', 'v3', credentials=creds)
+    return service
 
+# 列出目前帳戶下所有日曆清單
+@app.route("/calendars", methods=["GET"])
+def list_calendars():
+    service = get_calendar_service()
+    calendar_list = service.calendarList().list().execute()
+    results = []
+    for item in calendar_list.get("items", []):
+        results.append({
+            "summary": item.get("summary"),
+            "id": item.get("id")
+        })
+    return json.dumps(results, indent=2, ensure_ascii=False)
+
+# 抓取明日行程
+def get_google_calendar_events():
+    service = get_calendar_service()
     now = datetime.datetime.utcnow()
     tomorrow = now + datetime.timedelta(days=1)
     start = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0).isoformat() + 'Z'
     end = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day, 23, 59, 59).isoformat() + 'Z'
 
-    print(f"✅ 查詢明日行程範圍：{start} ～ {end}")
-
     events_result = service.events().list(
-        calendarId=CALENDAR_ID, timeMin=start, timeMax=end,
+        calendarId=CALENDAR_ID,
+        timeMin=start, timeMax=end,
         singleEvents=True, orderBy='startTime'
     ).execute()
+    return events_result.get('items', [])
 
-    events = events_result.get('items', [])
-
-    print("✅ Google 回傳 events：")
-    print(json.dumps(events, indent=2, ensure_ascii=False))
-
-    return events
-
+# 模擬天氣
 def mock_weather_for_location(location):
     return "晴，高溫 28°C，降雨 20%，紫外線：高"
 
+# 傳送 LINE 訊息
 def send_message(msg):
     url = 'https://api.line.me/v2/bot/message/push'
     headers = {
@@ -83,9 +96,9 @@ def run():
     message_lines = ["【明日行程提醒】"]
     for event in events:
         summary = event.get("summary", "（未命名行程）")
-        start = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date")
+        start = event.get("start", {}).get("dateTime", "")
         time_str = ""
-        if "T" in start:
+        if start:
             time_str = datetime.datetime.fromisoformat(start).strftime('%H:%M')
         location = event.get("location")
         if location:
@@ -94,11 +107,7 @@ def run():
         else:
             message_lines.append(f"- {time_str} {summary}（無地點）")
 
-    msg = "\n".join(message_lines)
-    print("✅ 最終訊息內容：")
-    print(msg)
-
-    send_message(msg)
+    send_message("\n".join(message_lines))
     return "Checked and sent if needed."
 
 if __name__ == "__main__":
