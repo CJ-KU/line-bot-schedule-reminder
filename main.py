@@ -7,7 +7,6 @@ import re
 from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from lunarcalendar import Converter, Solar
 
 load_dotenv()
 
@@ -25,7 +24,7 @@ def get_calendar_service():
     creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
     return build('calendar', 'v3', credentials=creds)
 
-# 查詢明日行程
+# 抓取明日行程
 def get_google_calendar_events():
     service = get_calendar_service()
     now = datetime.datetime.utcnow()
@@ -39,8 +38,7 @@ def get_google_calendar_events():
     ).execute()
     return events_result.get('items', [])
 
-# Google Maps Text Search + Reverse Geocoding
-
+# Google Maps 地點查詢
 def geocode_location(location):
     maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
     if not maps_api_key:
@@ -59,8 +57,6 @@ def geocode_location(location):
                 loc = data["results"][0]["geometry"]["location"]
                 print(f"✅ 地點查詢成功：{query} → {loc}")
                 return loc["lat"], loc["lng"]
-            else:
-                print(f"❌ 查無地點：{query} → {data.get('status')}")
         except Exception as e:
             print("❌ Google Places 查詢錯誤：", e)
         return None
@@ -73,12 +69,13 @@ def geocode_location(location):
         return search_place(cleaned)
     return None
 
+# 由座標反查鄉鎮名稱
 def reverse_geocode_town(lat, lng):
     maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
     if not maps_api_key:
         return None
     try:
-        url = f"https://maps.googleapis.com/maps/api/geocode/json"
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
         params = {"latlng": f"{lat},{lng}", "key": maps_api_key, "language": "zh-TW"}
         response = requests.get(url, params=params, timeout=5)
         data = response.json()
@@ -87,13 +84,11 @@ def reverse_geocode_town(lat, lng):
                 if "administrative_area_level_3" in comp["types"]:
                     print(f"🏞️ 取得鄉鎮：{comp['long_name']}")
                     return comp["long_name"]
-        print("⚠️ Reverse geocode 找不到鄉鎮名")
-        return None
     except Exception as e:
         print("❌ Reverse geocoding 失敗：", e)
-        return None
+    return None
 
-# 紫外線等級解釋
+# 紫外線等級轉換
 def interpret_uv_index(uvi):
     try:
         uvi = float(uvi)
@@ -110,11 +105,16 @@ def interpret_uv_index(uvi):
     except:
         return "❓ 未知"
 
+# 中央氣象署查詢
 def fetch_weather_by_cwa(town_name):
     try:
-        print(f"📡 嘗試從中央氣象署取得預報：{town_name}")
-        url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089?Authorization={CWA_API_KEY}&locationName={town_name}"
-        res = requests.get(url, timeout=5)
+        print(f"📡 查詢中央氣象署：{town_name}")
+        url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089"
+        params = {
+            "Authorization": CWA_API_KEY,
+            "locationName": town_name
+        }
+        res = requests.get(url, params=params, timeout=5)
         data = res.json()
         if res.status_code == 200 and data["records"]["locations"]:
             location_data = data["records"]["locations"][0]["location"][0]
@@ -126,41 +126,9 @@ def fetch_weather_by_cwa(town_name):
         print("⚠️ CWA 查無資料")
     except Exception as e:
         print("❌ CWA 天氣查詢失敗：", e)
-    return None
+    return "⚠️ 找不到明天天氣資料"
 
-def fetch_weather(lat, lon):
-    try:
-        print(f"🌍 進行 OpenWeatherMap 查詢：({lat}, {lon})")
-        url = "https://api.openweathermap.org/data/2.5/onecall"
-        params = {
-            "lat": lat, "lon": lon,
-            "appid": os.getenv("WEATHER_API_KEY"),
-            "units": "metric", "lang": "zh_tw",
-            "exclude": "minutely,hourly,alerts"
-        }
-        res = requests.get(url, params=params, timeout=5)
-        data = res.json()
-
-        if res.status_code == 200 and "daily" in data and len(data["daily"]) >= 2:
-            d = data["daily"][1]
-            print("✅ OpenWeatherMap 成功取得預報")
-            return f"{d['weather'][0]['description']}，溫度 {round(d['temp']['day'])}°C，降雨機率 {round(d.get('pop', 0)*100)}% ，紫外線 {d.get('uvi', 'N/A')}（{interpret_uv_index(d.get('uvi'))}）"
-
-        print("⚠️ OpenWeatherMap 無有效預報，嘗試 CWA")
-        town_name = reverse_geocode_town(lat, lon)
-        if town_name:
-            cwa_result = fetch_weather_by_cwa(town_name)
-            if cwa_result:
-                return f"📡 使用 CWA 預報：{cwa_result}"
-
-        print("⚠️ Reverse 也失敗，使用 fallback：平溪區")
-        fallback = fetch_weather_by_cwa("平溪區")
-        return f"📡 使用 Fallback：{fallback}" if fallback else "⚠️ 找不到明天天氣資料"
-
-    except Exception as e:
-        print("❌ fetch_weather 失敗：", e)
-        return "⚠️ 天氣查詢失敗"
-
+# LINE 推播
 def send_message(msg):
     url = 'https://api.line.me/v2/bot/message/push'
     headers = {'Authorization': f'Bearer {LINE_TOKEN}', 'Content-Type': 'application/json'}
@@ -189,7 +157,8 @@ def run():
         if location:
             coords = geocode_location(location)
             print(f"🧭 查詢地點：{location} → {coords}")
-            weather_info = fetch_weather(*coords) if coords else fetch_weather_by_cwa("平溪區")
+            town = reverse_geocode_town(*coords) if coords else None
+            weather_info = fetch_weather_by_cwa(town) if town else "⚠️ 找不到地點對應鄉鎮"
             lines.append(f"📌 {time_str}《{summary}》\n📍 地點：{location}\n🌤️ 天氣：{weather_info}\n")
         else:
             lines.append(f"📌 {time_str}《{summary}》（無地點）\n")
@@ -203,10 +172,14 @@ def debug_weather():
     coords = geocode_location(location)
     if not coords:
         return f"❌ 找不到地點：{location}"
-    weather = fetch_weather(*coords)
+    town = reverse_geocode_town(*coords)
+    if not town:
+        return f"❌ 查無鄉鎮資訊：{coords}"
+    weather = fetch_weather_by_cwa(town)
     return (
         f"✅ 測試地點：{location}\n"
         f"📍 座標：{coords}\n"
+        f"🏞️ 鄉鎮：{town}\n"
         f"🌤️ 天氣：{weather}"
     )
 
