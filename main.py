@@ -17,6 +17,7 @@ LINE_TOKEN = os.getenv("LINE_TOKEN")
 GROUP_ID = os.getenv("GROUP_ID")
 CALENDAR_ID = os.getenv("CALENDAR_ID") or "primary"
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+CWA_API_KEY = os.getenv("CWA_API_KEY")
 
 # 建立 Google Calendar service
 def get_calendar_service():
@@ -89,10 +90,28 @@ def interpret_uv_index(uvi):
     except:
         return "❓ 未知"
 
+# 中央氣象署備援天氣預報
+
+def fetch_weather_by_cwa(town_name):
+    try:
+        url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089?Authorization={CWA_API_KEY}&locationName={town_name}"
+        res = requests.get(url, timeout=5)
+        data = res.json()
+        if res.status_code == 200 and data["records"]["locations"]:
+            location_data = data["records"]["locations"][0]["location"][0]
+            elements = {e["elementName"]: e["time"][1]["elementValue"][0]["value"] for e in location_data["weatherElement"]}
+            description = elements.get("Wx", "無預報")
+            pop = elements.get("PoP12h", "-")
+            uvi = elements.get("UVI", "-")
+            return f"{description}，降雨機率 {pop}% ，紫外線 {uvi}（{interpret_uv_index(uvi)}）"
+    except Exception as e:
+        print("❌ CWA 天氣查詢失敗：", e)
+    return None
+
 # 嘗試附近地點
 
 def try_nearby_forecast(lat, lon):
-    offsets = [(-0.05, 0), (0.05, 0), (0, -0.05), (0, 0.05)]
+    offsets = [(-0.05, 0), (0.05, 0), (0, -0.05), (0, 0.05), (-0.1, 0), (0.1, 0), (0, -0.1), (0, 0.1)]
     for dlat, dlon in offsets:
         alt_lat, alt_lon = lat + dlat, lon + dlon
         print(f"🔄 嘗試附近座標：{alt_lat}, {alt_lon}")
@@ -123,7 +142,7 @@ def fetch_weather_by_coords_single(lat, lon):
 
 # 天氣查詢
 
-def fetch_weather_by_coords(lat, lon):
+def fetch_weather_by_coords(lat, lon, town_name=None):
     api_key = os.getenv("WEATHER_API_KEY")
     if not api_key:
         return "⚠️ 無法取得 API 金鑰"
@@ -138,9 +157,6 @@ def fetch_weather_by_coords(lat, lon):
     try:
         response = requests.get(url, params=params, timeout=5)
         data = response.json()
-        print(f"🌐 查詢天氣座標：{lat}, {lon}")
-        print("🧪 OpenWeather 回傳 daily：", data.get("daily"))
-
         if response.status_code == 200 and "daily" in data and len(data["daily"]) >= 2:
             d = data["daily"][1]
             return f"{d['weather'][0]['description']}，溫度 {round(d['temp']['day'])}°C，" + \
@@ -151,12 +167,16 @@ def fetch_weather_by_coords(lat, lon):
         if nearby:
             return nearby
 
+        if town_name:
+            cwa_result = fetch_weather_by_cwa(town_name)
+            if cwa_result:
+                return f"📡 使用 CWA 備援：{cwa_result}"
+
         if "current" in data:
             c = data["current"]
             return f"⚠️ 使用即時天氣：{c['weather'][0]['description']}，溫度 {round(c['temp'])}°C，" + \
                    f"紫外線 {c.get('uvi', 'N/A')}（{interpret_uv_index(c.get('uvi'))}）"
 
-        print("⚠️ OpenWeather 無資料：", data)
         return "⚠️ 找不到明天天氣資料"
 
     except Exception as e:
@@ -171,17 +191,6 @@ def send_message(msg):
     payload = {'to': GROUP_ID, 'messages': [{'type': 'text', 'text': msg}]}
     r = requests.post(url, headers=headers, json=payload)
     print("訊息發送結果：", r.status_code, r.text)
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    try:
-        body = request.get_data(as_text=True)
-        print("✅ Webhook raw body:\n", body)
-        json_body = json.loads(body)
-        print("✅ Webhook parsed JSON:\n", json.dumps(json_body, indent=2))
-    except Exception as e:
-        print("❌ Webhook 處理失敗：", e)
-    return "OK", 200
 
 @app.route("/")
 def index():
@@ -203,7 +212,7 @@ def run():
 
         if location:
             coords = geocode_location(location)
-            weather_info = fetch_weather_by_coords(*coords) if coords else "⚠️ 地點轉換失敗"
+            weather_info = fetch_weather_by_coords(*coords, town_name="平溪區") if coords else "⚠️ 地點轉換失敗"
             lines.append(f"📌 {time_str}《{summary}》\n📍 地點：{location}\n🌤️ 天氣：{weather_info}\n")
         else:
             lines.append(f"📌 {time_str}《{summary}》（無地點）\n")
