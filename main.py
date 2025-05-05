@@ -25,8 +25,10 @@ def get_google_calendar_events():
 
     now = datetime.datetime.utcnow()
     tomorrow = now + datetime.timedelta(days=1)
-    start = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0).isoformat() + 'Z'
-    end = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day, 23, 59, 59).isoformat() + 'Z'
+
+    # ✅ 包含全天行程（使用 date 範圍）
+    start = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day).isoformat() + 'Z'
+    end = (datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day) + datetime.timedelta(days=1)).isoformat() + 'Z'
 
     events_result = service.events().list(
         calendarId=CALENDAR_ID, timeMin=start, timeMax=end,
@@ -62,26 +64,6 @@ def webhook():
     except Exception as e:
         print("❌ Error parsing webhook:", e)
     return "OK", 200
-@app.route("/calendars", methods=["GET"])
-def list_calendars():
-    try:
-        credentials_info = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
-        creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
-        service = build('calendar', 'v3', credentials=creds)
-
-        calendar_list = service.calendarList().list().execute()
-        output = []
-        for calendar in calendar_list['items']:
-            summary = calendar.get('summary', '（無名稱）')
-            cal_id = calendar.get('id', '（無ID）')
-            line = f"{summary} ➜ {cal_id}"
-            print(line)
-            output.append(line)
-        return "<br>".join(output)
-
-    except Exception as e:
-        print("❌ 錯誤：", e)
-        return f"Error: {e}", 500
 
 @app.route("/")
 def index():
@@ -96,10 +78,15 @@ def run():
     message_lines = ["【明日行程提醒】"]
     for event in events:
         summary = event.get("summary", "（未命名行程）")
-        start = event.get("start", {}).get("dateTime", "")
+
+        # ✅ 處理 dateTime 或 date
+        start = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date")
         time_str = ""
-        if start:
-            time_str = datetime.datetime.fromisoformat(start).strftime('%H:%M')
+        if start and "T" in start:  # 有時間的事件
+            time_str = datetime.datetime.fromisoformat(start.replace("Z", "")).strftime('%H:%M')
+        elif start:  # 全天事件
+            time_str = "全天"
+
         location = event.get("location")
         if location:
             weather_info = mock_weather_for_location(location)
