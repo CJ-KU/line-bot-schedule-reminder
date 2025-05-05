@@ -4,7 +4,6 @@ import requests
 import os
 import json
 import re
-import xml.etree.ElementTree as ET
 from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -17,13 +16,16 @@ LINE_TOKEN = os.getenv("LINE_TOKEN")
 GROUP_ID = os.getenv("GROUP_ID")
 CALENDAR_ID = os.getenv("CALENDAR_ID") or "primary"
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-CWA_XML_PATH = "./F-D0047-089.xml"
+CWA_API_KEY = os.getenv("CWA_API_KEY")
+CWA_JSON_PATH = os.getenv("CWA_JSON_PATH", "F-D0047-089.json")  # 中央氣象署 JSON 檔案路徑
 
+# 建立 Google Calendar service
 def get_calendar_service():
     credentials_info = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
     creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
     return build('calendar', 'v3', credentials=creds)
 
+# 抓取明日行程
 def get_google_calendar_events():
     service = get_calendar_service()
     now = datetime.datetime.utcnow()
@@ -37,6 +39,7 @@ def get_google_calendar_events():
     ).execute()
     return events_result.get('items', [])
 
+# Google Maps 地點查詢
 def geocode_location(location):
     maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
     if not maps_api_key:
@@ -53,6 +56,7 @@ def geocode_location(location):
             data = response.json()
             if data["status"] == "OK" and data["results"]:
                 loc = data["results"][0]["geometry"]["location"]
+                print(f"✅ 地點查詢成功：{query} → {loc}")
                 return loc["lat"], loc["lng"]
         except Exception as e:
             print("❌ Google Places 查詢錯誤：", e)
@@ -66,7 +70,8 @@ def geocode_location(location):
         return search_place(cleaned)
     return None
 
-def reverse_geocode_town(lat, lng):
+# 由座標反查「縣市」名稱
+def reverse_geocode_city(lat, lng):
     maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
     if not maps_api_key:
         return None
@@ -75,20 +80,18 @@ def reverse_geocode_town(lat, lng):
         params = {"latlng": f"{lat},{lng}", "key": maps_api_key, "language": "zh-TW"}
         response = requests.get(url, params=params, timeout=5)
         data = response.json()
-
         if data["status"] == "OK":
             for comp in data["results"][0]["address_components"]:
-                if any(word in comp["long_name"] for word in ["區", "鄉", "鎮", "市"]) and "political" in comp["types"]:
-                    print(f"🏞️ Fallback 鄉鎮名：{comp['long_name']}")
+                if "administrative_area_level_1" in comp["types"]:
+                    print(f"🏙️ 取得縣市：{comp['long_name']}")
                     return comp["long_name"]
-        print("⚠️ Reverse geocode 找不到合適鄉鎮名")
+        print("⚠️ 找不到行政區（縣市）")
         return None
     except Exception as e:
-        print("❌ Reverse geocoding 失敗：", e)
+        print("❌ Reverse geocoding 錯誤：", e)
         return None
 
-
-
+# 紫外線等級轉換
 def interpret_uv_index(uvi):
     try:
         uvi = float(uvi)
@@ -105,29 +108,30 @@ def interpret_uv_index(uvi):
     except:
         return "❓ 未知"
 
-def fetch_weather_from_xml(town_name):
+# 從 JSON 擷取特定城市明天中午天氣
+def fetch_weather_by_city(city_name):
     try:
-        tree = ET.parse(CWA_XML_PATH)
-        root = tree.getroot()
-        tomorrow = (datetime.datetime.utcnow() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-        for location in root.iter("location"):
-            name = location.find("locationName").text.strip()
-            if name == town_name:
-                weather_data = {}
-                for element in location.findall("weatherElement"):
-                    element_name = element.find("elementName").text
-                    for time in element.findall("time"):
-                        start_time = time.attrib.get("startTime", "")
-                        if tomorrow in start_time and "12:00:00" in start_time:
-                            value = time.find("elementValue/value").text
-                            weather_data[element_name] = value
-                            break
-                return f"{weather_data.get('Wx', '無預報')}，降雨機率 {weather_data.get('PoP12h', '-')}% ，紫外線 {weather_data.get('UVI', '-')}（{interpret_uv_index(weather_data.get('UVI', '-'))}）"
-        return "⚠️ 找不到明天天氣資料"
+        print(f"📡 從 JSON 查詢天氣：{city_name}")
+        with open(CWA_JSON_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        locations = data["records"]["locations"][0]["location"]
+        for loc in locations:
+            if loc["locationName"] == city_name:
+                weather_elements = {e["elementName"]: e["time"] for e in loc["weatherElement"]}
+                # 取中午 12:00 的時間點
+                for i in range(len(weather_elements["Wx"])):
+                    t = weather_elements["Wx"][i]["startTime"]
+                    if "12:00:00" in t:
+                        desc = weather_elements["Wx"][i]["elementValue"][0]["value"]
+                        pop = weather_elements["PoP12h"][i]["elementValue"][0]["value"]
+                        uvi = weather_elements["UVI"][i]["elementValue"][0]["value"]
+                        return f"{desc}，降雨機率 {pop}% ，紫外線 {uvi}（{interpret_uv_index(uvi)}）"
+        print("⚠️ 找不到指定時間資料")
     except Exception as e:
-        print("❌ XML 解析錯誤：", e)
-        return "⚠️ 找不到明天天氣資料"
+        print("❌ JSON 天氣解析失敗：", e)
+    return "⚠️ 找不到明天天氣資料"
 
+# 傳送 LINE 訊息
 def send_message(msg):
     url = 'https://api.line.me/v2/bot/message/push'
     headers = {'Authorization': f'Bearer {LINE_TOKEN}', 'Content-Type': 'application/json'}
@@ -155,8 +159,9 @@ def run():
 
         if location:
             coords = geocode_location(location)
-            town = reverse_geocode_town(*coords) if coords else None
-            weather_info = fetch_weather_from_xml(town) if town else "⚠️ 找不到地點對應鄉鎮"
+            print(f"🧭 查詢地點：{location} → {coords}")
+            city = reverse_geocode_city(*coords) if coords else None
+            weather_info = fetch_weather_by_city(city) if city else "⚠️ 找不到縣市"
             lines.append(f"📌 {time_str}《{summary}》\n📍 地點：{location}\n🌤️ 天氣：{weather_info}\n")
         else:
             lines.append(f"📌 {time_str}《{summary}》（無地點）\n")
@@ -170,14 +175,14 @@ def debug_weather():
     coords = geocode_location(location)
     if not coords:
         return f"❌ 找不到地點：{location}"
-    town = reverse_geocode_town(*coords)
-    if not town:
-        return f"❌ 查無鄉鎮資訊：{coords}"
-    weather = fetch_weather_from_xml(town)
+    city = reverse_geocode_city(*coords)
+    if not city:
+        return f"❌ 查無縣市資訊：{coords}"
+    weather = fetch_weather_by_city(city)
     return (
         f"✅ 測試地點：{location}\n"
         f"📍 座標：{coords}\n"
-        f"🏞️ 鄉鎮：{town}\n"
+        f"🏙️ 縣市：{city}\n"
         f"🌤️ 天氣：{weather}"
     )
 
