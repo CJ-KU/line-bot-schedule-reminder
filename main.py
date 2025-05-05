@@ -16,10 +16,9 @@ LINE_TOKEN = os.getenv("LINE_TOKEN")
 GROUP_ID = os.getenv("GROUP_ID")
 CALENDAR_ID = os.getenv("CALENDAR_ID") or "primary"
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-CWA_API_KEY = os.getenv("CWA_API_KEY")
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+OPENWEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 
-# 建立 Google Calendar service
 def get_calendar_service():
     credentials_info = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
     creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
@@ -48,35 +47,13 @@ def geocode_location(location):
             "language": "zh-TW"
         }
         response = requests.get(url, params=params, timeout=5)
-        data = response.json()
-        if data["status"] == "OK" and data["results"]:
-            loc = data["results"][0]["geometry"]["location"]
-            print(f"✅ 地點查詢成功：{location} → {(loc['lat'], loc['lng'])}")
+        results = response.json().get("results", [])
+        if results:
+            loc = results[0]["geometry"]["location"]
             return loc["lat"], loc["lng"]
     except Exception as e:
-        print("❌ Google Maps 錯誤：", e)
+        print("地點查詢失敗：", e)
     return None
-
-def reverse_geocode_town(lat, lng):
-    try:
-        url = "https://maps.googleapis.com/maps/api/geocode/json"
-        params = {
-            "latlng": f"{lat},{lng}",
-            "key": GOOGLE_MAPS_API_KEY,
-            "language": "zh-TW"
-        }
-        res = requests.get(url, params=params)
-        data = res.json()
-        if data["status"] == "OK" and data["results"]:
-            for comp in data["results"][0]["address_components"]:
-                if "administrative_area_level_3" in comp["types"]:
-                    print(f"🏞️ 取得鄉鎮：{comp['long_name']}")
-                    return comp["long_name"]
-        print("⚠️ 找不到鄉鎮名稱")
-        return None
-    except Exception as e:
-        print("❌ Reverse geocoding 錯誤：", e)
-        return None
 
 def interpret_uv_index(uvi):
     try:
@@ -94,37 +71,30 @@ def interpret_uv_index(uvi):
     except:
         return "❓ 未知"
 
-def fetch_weather_by_cwa(town_name):
+def fetch_weather_by_openweather(lat, lon):
     try:
-        print(f"📡 查詢中央氣象署：{town_name}")
-        url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089"
+        url = "https://api.openweathermap.org/data/2.5/onecall"
         params = {
-            "Authorization": CWA_API_KEY,
-            "locationName": town_name
+            "lat": lat,
+            "lon": lon,
+            "appid": OPENWEATHER_API_KEY,
+            "units": "metric",
+            "lang": "zh_tw",
+            "exclude": "current,minutely,hourly,alerts"
         }
         res = requests.get(url, params=params, timeout=5)
         data = res.json()
-        if res.status_code == 200 and data["records"]["locations"]:
-            location_data = data["records"]["locations"][0]["location"][0]
-            elements = {e["elementName"]: e["time"] for e in location_data["weatherElement"]}
-            target_time = (datetime.datetime.now() + datetime.timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0)
-
-            def find_element_value(times):
-                for t in times:
-                    start = datetime.datetime.fromisoformat(t["startTime"].replace("+08:00", ""))
-                    end = datetime.datetime.fromisoformat(t["endTime"].replace("+08:00", ""))
-                    if start <= target_time < end:
-                        return t["elementValue"][0]["value"]
-                return "-"
-
-            wx = find_element_value(elements.get("Wx", []))
-            pop = find_element_value(elements.get("PoP12h", []))
-            uvi = find_element_value(elements.get("UVI", []))
-
-            return f"{wx}，降雨機率 {pop}% ，紫外線 {uvi}（{interpret_uv_index(uvi)}）"
-        print("⚠️ 中央氣象署查無資料")
+        if res.status_code == 200 and "daily" in data and len(data["daily"]) >= 2:
+            d = data["daily"][1]  # 明日預報
+            desc = d['weather'][0]['description']
+            temp = round(d['temp']['day'])
+            pop = round(d.get('pop', 0) * 100)
+            uvi = d.get('uvi', 'N/A')
+            return f"{desc}，溫度 {temp}°C，降雨機率 {pop}% ，紫外線 {uvi}（{interpret_uv_index(uvi)}）"
+        else:
+            print("⚠️ OpenWeatherMap 回傳格式不符或無資料")
     except Exception as e:
-        print("❌ CWA 天氣查詢失敗：", e)
+        print("❌ OpenWeatherMap 天氣查詢錯誤：", e)
     return "⚠️ 找不到明天天氣資料"
 
 def send_message(msg):
@@ -154,9 +124,7 @@ def run():
 
         if location:
             coords = geocode_location(location)
-            print(f"🧭 查詢地點：{location} → {coords}")
-            town = reverse_geocode_town(*coords) if coords else None
-            weather_info = fetch_weather_by_cwa(town) if town else "⚠️ 找不到地點對應鄉鎮"
+            weather_info = fetch_weather_by_openweather(*coords) if coords else "⚠️ 找不到明天天氣資料"
             lines.append(f"📌 {time_str}《{summary}》\n📍 地點：{location}\n🌤️ 天氣：{weather_info}\n")
         else:
             lines.append(f"📌 {time_str}《{summary}》（無地點）\n")
@@ -170,14 +138,10 @@ def debug_weather():
     coords = geocode_location(location)
     if not coords:
         return f"❌ 找不到地點：{location}"
-    town = reverse_geocode_town(*coords)
-    if not town:
-        return f"❌ 查無鄉鎮資訊：{coords}"
-    weather = fetch_weather_by_cwa(town)
+    weather = fetch_weather_by_openweather(*coords)
     return (
         f"✅ 測試地點：{location}\n"
         f"📍 座標：{coords}\n"
-        f"🏞️ 鄉鎮：{town}\n"
         f"🌤️ 天氣：{weather}"
     )
 
