@@ -2,8 +2,8 @@ from flask import Flask, request
 import datetime
 import requests
 import os
-from dotenv import load_dotenv
 import json
+from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from lunarcalendar import Converter, Solar
@@ -14,29 +14,13 @@ app = Flask(__name__)
 
 LINE_TOKEN = os.getenv("LINE_TOKEN")
 GROUP_ID = os.getenv("GROUP_ID")
+CALENDAR_ID = os.getenv("CALENDAR_ID") or "primary"
 
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-SERVICE_ACCOUNT_FILE = 'credentials.json'
-CALENDAR_ID = os.getenv("CALENDAR_ID") or 'primary'
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    try:
-        body = request.get_data(as_text=True)
-        print("✅ Webhook raw body:")
-        print(body)
-        json_body = json.loads(body)
-        print("✅ Webhook parsed JSON:")
-        print(json.dumps(json_body, indent=2))
-    except Exception as e:
-        print("❌ Error parsing webhook:", e)
-    return "OK", 200
-
-
 
 def get_google_calendar_events():
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    credentials_info = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
+    creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
     service = build('calendar', 'v3', credentials=creds)
 
     now = datetime.datetime.utcnow()
@@ -44,11 +28,11 @@ def get_google_calendar_events():
     start = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0).isoformat() + 'Z'
     end = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day, 23, 59, 59).isoformat() + 'Z'
 
-    events_result = service.events().list(calendarId=CALENDAR_ID, timeMin=start, timeMax=end,
-                                          singleEvents=True, orderBy='startTime').execute()
-    events = events_result.get('items', [])
-
-    return events
+    events_result = service.events().list(
+        calendarId=CALENDAR_ID, timeMin=start, timeMax=end,
+        singleEvents=True, orderBy='startTime'
+    ).execute()
+    return events_result.get('items', [])
 
 def mock_weather_for_location(location):
     return "晴，高溫 28°C，降雨 20%，紫外線：高"
@@ -65,6 +49,19 @@ def send_message(msg):
     }
     r = requests.post(url, headers=headers, json=payload)
     print("訊息發送結果：", r.status_code, r.text)
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    try:
+        body = request.get_data(as_text=True)
+        print("✅ Webhook raw body:")
+        print(body)
+        json_body = json.loads(body)
+        print("✅ Webhook parsed JSON:")
+        print(json.dumps(json_body, indent=2))
+    except Exception as e:
+        print("❌ Error parsing webhook:", e)
+    return "OK", 200
 
 @app.route("/")
 def index():
