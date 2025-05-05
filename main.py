@@ -80,21 +80,14 @@ def reverse_geocode_town(lat, lng):
         response = requests.get(url, params=params, timeout=5)
         data = response.json()
         if data["status"] == "OK":
-            level3 = None
-            level2 = None
             for comp in data["results"][0]["address_components"]:
-                if "administrative_area_level_3" in comp["types"]:
-                    level3 = comp["long_name"]
-                elif "administrative_area_level_2" in comp["types"]:
-                    level2 = comp["long_name"]
-            town_name = level3 or level2
-            print(f"🏞️ 取得行政區（fallback）：{town_name}")
-            return town_name
-        print("⚠️ Reverse geocode 找不到行政區")
-        return None
+                if "administrative_area_level_2" in comp["types"]:
+                    print(f"🏞️ 抓到縣市名稱：{comp['long_name']}")
+                    return comp["long_name"]
+        print("⚠️ 無法取得縣市")
     except Exception as e:
-        print("❌ Reverse geocoding 失敗：", e)
-        return None
+        print("❌ Reverse geocode 錯誤：", e)
+    return None
 
 
 # 紫外線等級轉換
