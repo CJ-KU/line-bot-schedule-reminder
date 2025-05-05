@@ -117,20 +117,37 @@ def fetch_weather_by_coords(lat, lon):
         response = requests.get(url, params=params, timeout=5)
         data = response.json()
 
-        if response.status_code != 200 or "daily" not in data:
+        print(f"🌐 查詢天氣座標：{lat}, {lon}")
+        print("🧪 OpenWeather 回傳 daily：", data.get("daily"))
+
+        # 優先查明天預報
+        if response.status_code == 200 and "daily" in data and len(data["daily"]) >= 2:
+            tomorrow = data["daily"][1]
+            description = tomorrow["weather"][0]["description"]
+            temp = round(tomorrow["temp"]["day"])
+            pop = round(tomorrow.get("pop", 0) * 100)
+            uvi = tomorrow.get("uvi", "N/A")
+            uv_level = interpret_uv_index(uvi)
+
+            return f"{description}，溫度 {temp}°C，降雨機率 {pop}% ，紫外線 {uvi}（{uv_level}）"
+
+        # 若 daily 無效，改用 current 作為備援
+        elif "current" in data:
+            current = data["current"]
+            description = current["weather"][0]["description"]
+            temp = round(current["temp"])
+            uvi = current.get("uvi", "N/A")
+            uv_level = interpret_uv_index(uvi)
+            return f"⚠️ 使用即時天氣：{description}，溫度 {temp}°C，紫外線 {uvi}（{uv_level}）"
+
+        else:
+            print("⚠️ OpenWeather 無預測資料：", data)
             return "⚠️ 找不到明天天氣資料"
 
-        tomorrow = data["daily"][1]
-        description = tomorrow["weather"][0]["description"]
-        temp = round(tomorrow["temp"]["day"])  # 白天平均溫度
-        pop = round(tomorrow.get("pop", 0) * 100)  # 降雨機率 (%)
-        uvi = tomorrow.get("uvi", "N/A")
-        uv_level = interpret_uv_index(uvi)
-
-        return f"{description}，溫度 {temp}°C，降雨機率 {pop}% ，紫外線 {uvi}（{uv_level}）"
     except Exception as e:
         print("❌ 天氣查詢失敗：", e)
         return "⚠️ 天氣查詢失敗"
+
 
 
 # 傳送 LINE 訊息
