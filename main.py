@@ -131,7 +131,7 @@ def run():
             time_str = "(整天)"
 
         if location:
-            weather_info = mock_weather_for_location(location)
+            weather_info = fetch_weather_for_location(location)
             message_lines.append(f"- {time_str} {summary}\n  地點：{location}\n  天氣：{weather_info}")
         else:
             message_lines.append(f"- {time_str} {summary}（無地點）")
