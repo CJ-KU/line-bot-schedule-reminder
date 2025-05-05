@@ -18,7 +18,7 @@ CALENDAR_ID = os.getenv("CALENDAR_ID") or "primary"
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 CWA_API_KEY = os.getenv("CWA_API_KEY")
 
-# Google Calendar 認證
+# 連線到 Google Calendar
 def get_calendar_service():
     credentials_info = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
     creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
@@ -38,7 +38,7 @@ def get_google_calendar_events():
     ).execute()
     return events_result.get('items', [])
 
-# Google Maps 查詢與行政區反查
+# Google Maps 轉座標
 def geocode_location(location):
     maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
     def clean_location(loc):
@@ -64,6 +64,7 @@ def geocode_location(location):
         return search_place(cleaned)
     return None
 
+# 座標轉鄉鎮名稱
 def reverse_geocode_town(lat, lon):
     maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
     try:
@@ -80,6 +81,7 @@ def reverse_geocode_town(lat, lon):
         print("❌ Reverse geocoding 失敗：", e)
     return None
 
+# 紫外線指數解釋
 def interpret_uv_index(uvi):
     try:
         uvi = float(uvi)
@@ -91,6 +93,7 @@ def interpret_uv_index(uvi):
     except:
         return "❓ 未知"
 
+# 只用 CWA 查詢
 def fetch_weather_by_cwa(town_name):
     try:
         print(f"📡 CWA 預報查詢：{town_name}")
@@ -108,40 +111,22 @@ def fetch_weather_by_cwa(town_name):
         print("❌ CWA 查詢失敗：", e)
     return None
 
+# 使用 CWA 查天氣（強制模式）
 def fetch_weather(lat, lon):
     try:
-        print(f"🌍 查詢 OpenWeatherMap：({lat}, {lon})")
-        url = "https://api.openweathermap.org/data/2.5/onecall"
-        params = {
-            "lat": lat, "lon": lon,
-            "appid": os.getenv("WEATHER_API_KEY"),
-            "units": "metric", "lang": "zh_tw",
-            "exclude": "minutely,hourly,alerts"
-        }
-        res = requests.get(url, params=params, timeout=5)
-        data = res.json()
-        if res.status_code == 200 and "daily" in data and len(data["daily"]) >= 2:
-            d = data["daily"][1]
-            desc = d["weather"][0]["description"]
-            temp = round(d["temp"]["day"])
-            pop = round(d.get("pop", 0) * 100)
-            uvi = d.get("uvi", "N/A")
-            uvi_level = interpret_uv_index(uvi)
-            print("✅ OpenWeatherMap 成功取得預報")
-            return f"{desc}，溫度 {temp}°C，降雨機率 {pop}% ，紫外線 {uvi}（{uvi_level}）"
-        print("⚠️ OpenWeatherMap 無效 → 用 CWA")
+        print(f"📡 使用 CWA 查詢 ({lat}, {lon})")
         town_name = reverse_geocode_town(lat, lon)
-        if town_name:
-            cwa_result = fetch_weather_by_cwa(town_name)
-            if cwa_result:
-                return f"📡 使用 CWA 預報：{cwa_result}"
-        print("⚠️ fallback → 平溪區")
-        fallback = fetch_weather_by_cwa("平溪區")
-        return f"📡 使用 Fallback：{fallback}" if fallback else "⚠️ 找不到明天天氣資料"
+        if not town_name:
+            print("⚠️ 找不到行政區，使用 fallback：平溪區")
+            town_name = "平溪區"
+
+        cwa_result = fetch_weather_by_cwa(town_name)
+        return f"📡 CWA 預報：{cwa_result}" if cwa_result else "⚠️ CWA 查無資料"
     except Exception as e:
-        print("❌ fetch_weather 失敗：", e)
+        print("❌ fetch_weather 發生錯誤：", e)
         return "⚠️ 天氣查詢失敗"
 
+# 傳 LINE 訊息
 def send_message(msg):
     url = 'https://api.line.me/v2/bot/message/push'
     headers = {'Authorization': f'Bearer {LINE_TOKEN}', 'Content-Type': 'application/json'}
@@ -153,6 +138,7 @@ def send_message(msg):
 def index():
     return "Bot is running!"
 
+# 自動提醒行程 + 天氣
 @app.route("/run", methods=["GET"])
 def run():
     events = get_google_calendar_events()
@@ -177,6 +163,8 @@ def run():
 
     send_message("\n".join(lines))
     return "Checked and sent."
+
+# 測試指定地點天氣
 @app.route("/debug", methods=["GET"])
 def debug_weather():
     location = request.args.get("location", default="平溪車站")
