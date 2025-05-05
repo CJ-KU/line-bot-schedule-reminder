@@ -39,7 +39,7 @@ def get_google_calendar_events():
     ).execute()
     return events_result.get('items', [])
 
-# Google Maps Text Search
+# Google Maps Text Search + Reverse Geocoding
 
 def geocode_location(location):
     maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -57,21 +57,28 @@ def geocode_location(location):
             data = response.json()
             if data["status"] == "OK" and data["results"]:
                 loc = data["results"][0]["geometry"]["location"]
-                print(f"✅ 地點查詢成功：{query} → {loc}")
                 return loc["lat"], loc["lng"]
-            else:
-                print(f"❌ 查無地點：{query} → {data.get('status')}")
         except Exception as e:
             print("❌ Google Places 查詢錯誤：", e)
         return None
 
-    coords = search_place(location)
-    if coords:
-        return coords
-    cleaned = clean_location(location)
-    if cleaned != location:
-        return search_place(cleaned)
-    return None
+def reverse_geocode_town(lat, lng):
+    maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    if not maps_api_key:
+        return None
+    try:
+        url = f"https://maps.googleapis.com/maps/api/geocode/json"
+        params = {"latlng": f"{lat},{lng}", "key": maps_api_key, "language": "zh-TW"}
+        response = requests.get(url, params=params, timeout=5)
+        data = response.json()
+        if data["status"] == "OK":
+            for comp in data["results"][0]["address_components"]:
+                if "administrative_area_level_3" in comp["types"]:
+                    return comp["long_name"]
+        return None
+    except Exception as e:
+        print("❌ Reverse geocoding 失敗：", e)
+        return None
 
 # 紫外線等級解釋
 def interpret_uv_index(uvi):
@@ -108,20 +115,11 @@ def fetch_weather_by_cwa(town_name):
         print("❌ CWA 天氣查詢失敗：", e)
     return None
 
-# 嘗試附近地點
+# 天氣查詢邏輯
 
-def try_nearby_forecast(lat, lon):
-    offsets = [(-0.05, 0), (0.05, 0), (0, -0.05), (0, 0.05), (-0.1, 0), (0.1, 0), (0, -0.1), (0, 0.1)]
-    for dlat, dlon in offsets:
-        alt_lat, alt_lon = lat + dlat, lon + dlon
-        print(f"🔄 嘗試附近座標：{alt_lat}, {alt_lon}")
-        forecast = fetch_weather_by_coords_single(alt_lat, alt_lon)
-        if forecast:
-            return f"📍 附近預報：{forecast}"
-    return None
-
-def fetch_weather_by_coords_single(lat, lon):
+def fetch_weather(lat, lon):
     try:
+        # 1. OpenWeatherMap 優先
         url = "https://api.openweathermap.org/data/2.5/onecall"
         params = {
             "lat": lat, "lon": lon,
@@ -131,60 +129,28 @@ def fetch_weather_by_coords_single(lat, lon):
         }
         res = requests.get(url, params=params, timeout=5)
         data = res.json()
+
         if res.status_code == 200 and "daily" in data and len(data["daily"]) >= 2:
             d = data["daily"][1]
-            return f"{d['weather'][0]['description']}，溫度 {round(d['temp']['day'])}°C，" + \
-                   f"降雨機率 {round(d.get('pop', 0)*100)}% ，紫外線 {d.get('uvi', 'N/A')}（{interpret_uv_index(d.get('uvi'))}）"
-        return None
-    except Exception as e:
-        print("❌ Nearby 天氣查詢失敗：", e)
-        return None
+            return f"{d['weather'][0]['description']}，溫度 {round(d['temp']['day'])}°C，降雨機率 {round(d.get('pop', 0)*100)}% ，紫外線 {d.get('uvi', 'N/A')}（{interpret_uv_index(d.get('uvi'))}）"
 
-# 天氣查詢
-
-def fetch_weather_by_coords(lat, lon, town_name=None):
-    api_key = os.getenv("WEATHER_API_KEY")
-    if not api_key:
-        return "⚠️ 無法取得 API 金鑰"
-
-    url = "https://api.openweathermap.org/data/2.5/onecall"
-    params = {
-        "lat": lat, "lon": lon,
-        "appid": api_key, "units": "metric",
-        "lang": "zh_tw", "exclude": "minutely,hourly,alerts"
-    }
-
-    try:
-        response = requests.get(url, params=params, timeout=5)
-        data = response.json()
-        if response.status_code == 200 and "daily" in data and len(data["daily"]) >= 2:
-            d = data["daily"][1]
-            return f"{d['weather'][0]['description']}，溫度 {round(d['temp']['day'])}°C，" + \
-                   f"降雨機率 {round(d.get('pop', 0)*100)}% ，紫外線 {d.get('uvi', 'N/A')}（{interpret_uv_index(d.get('uvi'))}）"
-
-        print("⚠️ 無 daily 預報，嘗試附近地點")
-        nearby = try_nearby_forecast(lat, lon)
-        if nearby:
-            return nearby
-
+        # 2. Reverse Geocode → CWA 備援
+        town_name = reverse_geocode_town(lat, lon)
+        print(f"🔍 Reverse 取得鄉鎮：{town_name}")
         if town_name:
             cwa_result = fetch_weather_by_cwa(town_name)
             if cwa_result:
-                return f"📡 使用 CWA 備援：{cwa_result}"
+                return f"📡 使用 CWA 預報：{cwa_result}"
 
-        if "current" in data:
-            c = data["current"]
-            return f"⚠️ 使用即時天氣：{c['weather'][0]['description']}，溫度 {round(c['temp'])}°C，" + \
-                   f"紫外線 {c.get('uvi', 'N/A')}（{interpret_uv_index(c.get('uvi'))}）"
-
-        return "⚠️ 找不到明天天氣資料"
+        # 3. 最後固定 fallback：平溪區
+        fallback = fetch_weather_by_cwa("平溪區")
+        return fallback if fallback else "⚠️ 找不到明天天氣資料"
 
     except Exception as e:
-        print("❌ 天氣查詢失敗：", e)
+        print("❌ fetch_weather 失敗：", e)
         return "⚠️ 天氣查詢失敗"
 
 # 傳送 LINE 訊息
-
 def send_message(msg):
     url = 'https://api.line.me/v2/bot/message/push'
     headers = {'Authorization': f'Bearer {LINE_TOKEN}', 'Content-Type': 'application/json'}
@@ -212,7 +178,7 @@ def run():
 
         if location:
             coords = geocode_location(location)
-            weather_info = fetch_weather_by_coords(*coords, town_name="平溪區") if coords else "⚠️ 地點轉換失敗"
+            weather_info = fetch_weather(*coords) if coords else fetch_weather_by_cwa("平溪區")
             lines.append(f"📌 {time_str}《{summary}》\n📍 地點：{location}\n🌤️ 天氣：{weather_info}\n")
         else:
             lines.append(f"📌 {time_str}《{summary}》（無地點）\n")
