@@ -21,10 +21,17 @@ CALENDAR_ID = os.getenv("CALENDAR_ID") or 'primary'
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    body = request.get_json(force=True)
-    print("✅ Webhook received!")
-    print(json.dumps(body, indent=2))
+    try:
+        body = request.get_data(as_text=True)
+        print("✅ Webhook raw body:")
+        print(body)
+        json_body = json.loads(body)
+        print("✅ Webhook parsed JSON:")
+        print(json.dumps(json_body, indent=2))
+    except Exception as e:
+        print("❌ Error parsing webhook:", e)
     return "OK", 200
+
 
 
 def get_google_calendar_events():
