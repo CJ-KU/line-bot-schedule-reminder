@@ -81,3 +81,8 @@ def run():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    body = request.get_json()
+    print(json.dumps(body, indent=2))  # 印出群組 ID 等 webhook 內容
+    return "OK", 200
