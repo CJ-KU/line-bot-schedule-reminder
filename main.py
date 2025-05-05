@@ -53,8 +53,32 @@ def get_google_calendar_events():
     return events_result.get('items', [])
 
 # 模擬天氣
-def mock_weather_for_location(location):
-    return "晴，高溫 28°C，降雨 20%，紫外線：高"
+def fetch_weather_for_location(location):
+    api_key = os.getenv("WEATHER_API_KEY")
+    if not api_key:
+        return "⚠️ 無法取得 API 金鑰"
+
+    url = "https://api.openweathermap.org/data/2.5/weather"
+    params = {
+        "q": location,
+        "appid": api_key,
+        "units": "metric",
+        "lang": "zh_tw"
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=5)
+        data = response.json()
+        if response.status_code != 200 or "main" not in data:
+            return f"⚠️ 找不到 {location} 天氣資料"
+
+        description = data["weather"][0]["description"]
+        temp = data["main"]["temp"]
+        rain = data.get("rain", {}).get("1h", 0) or 0
+        return f"{description}，溫度 {temp}°C，降雨 {rain}mm"
+    except Exception as e:
+        print("❌ 天氣查詢失敗：", e)
+        return "⚠️ 天氣查詢失敗"
 
 # 傳送 LINE 訊息
 def send_message(msg):
