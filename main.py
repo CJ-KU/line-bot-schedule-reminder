@@ -62,6 +62,26 @@ def webhook():
     except Exception as e:
         print("❌ Error parsing webhook:", e)
     return "OK", 200
+@app.route("/calendars", methods=["GET"])
+def list_calendars():
+    try:
+        credentials_info = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
+        creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
+        service = build('calendar', 'v3', credentials=creds)
+
+        calendar_list = service.calendarList().list().execute()
+        output = []
+        for calendar in calendar_list['items']:
+            summary = calendar.get('summary', '（無名稱）')
+            cal_id = calendar.get('id', '（無ID）')
+            line = f"{summary} ➜ {cal_id}"
+            print(line)
+            output.append(line)
+        return "<br>".join(output)
+
+    except Exception as e:
+        print("❌ 錯誤：", e)
+        return f"Error: {e}", 500
 
 @app.route("/")
 def index():
