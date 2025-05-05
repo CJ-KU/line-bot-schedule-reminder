@@ -1,182 +1,72 @@
-from flask import Flask, request
-import datetime
-import requests
 import os
 import json
-import re
+import datetime
+import requests
+from urllib.parse import quote
+from flask import Flask, request
 from dotenv import load_dotenv
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from lunarcalendar import Converter, Solar
 
 load_dotenv()
+
 app = Flask(__name__)
 
-LINE_TOKEN = os.getenv("LINE_TOKEN")
-GROUP_ID = os.getenv("GROUP_ID")
-CALENDAR_ID = os.getenv("CALENDAR_ID") or "primary"
-SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 CWA_API_KEY = os.getenv("CWA_API_KEY")
 
-# 連線到 Google Calendar
-def get_calendar_service():
-    credentials_info = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
-    creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
-    return build('calendar', 'v3', credentials=creds)
 
-# 查詢明日行程
-def get_google_calendar_events():
-    service = get_calendar_service()
-    now = datetime.datetime.utcnow()
-    tomorrow = now + datetime.timedelta(days=1)
-    start = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0).isoformat() + 'Z'
-    end = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day, 23, 59, 59).isoformat() + 'Z'
-    events_result = service.events().list(
-        calendarId=CALENDAR_ID,
-        timeMin=start, timeMax=end,
-        singleEvents=True, orderBy='startTime'
-    ).execute()
-    return events_result.get('items', [])
-
-# Google Maps 轉座標
-def geocode_location(location):
-    maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
-    def clean_location(loc):
-        return re.sub(r"\(.*?\)|（.*?）", "", loc).strip()
-    def search_place(query):
-        url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
-        params = {"query": query, "key": maps_api_key, "region": "tw", "language": "zh-TW"}
-        try:
-            response = requests.get(url, params=params, timeout=5)
-            data = response.json()
-            if data["status"] == "OK" and data["results"]:
-                loc = data["results"][0]["geometry"]["location"]
-                print(f"✅ 地點查詢成功：{query} → {loc}")
-                return loc["lat"], loc["lng"]
-        except Exception as e:
-            print("❌ Google Places 查詢錯誤：", e)
-        return None
-    coords = search_place(location)
-    if coords:
-        return coords
-    cleaned = clean_location(location)
-    if cleaned != location:
-        return search_place(cleaned)
-    return None
-
-# 座標轉鄉鎮名稱
-def reverse_geocode_town(lat, lon):
-    maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+def fetch_tomorrow_weather_by_cwa(location_name):
     try:
-        url = f"https://maps.googleapis.com/maps/api/geocode/json"
-        params = {"latlng": f"{lat},{lon}", "key": maps_api_key, "language": "zh-TW"}
-        response = requests.get(url, params=params, timeout=5)
-        data = response.json()
-        if data["status"] == "OK":
-            for comp in data["results"][0]["address_components"]:
-                if "administrative_area_level_3" in comp["types"]:
-                    print(f"🏞️ 取得鄉鎮：{comp['long_name']}")
-                    return comp["long_name"]
-    except Exception as e:
-        print("❌ Reverse geocoding 失敗：", e)
-    return None
-
-# 紫外線指數解釋
-def interpret_uv_index(uvi):
-    try:
-        uvi = float(uvi)
-        if uvi <= 2: return "🟢 低"
-        elif uvi <= 5: return "🟡 中等"
-        elif uvi <= 7: return "🟠 高"
-        elif uvi <= 10: return "🔴 很高"
-        else: return "🟣 極高"
-    except:
-        return "❓ 未知"
-
-# 只用 CWA 查詢
-def fetch_weather_by_cwa(town_name):
-    try:
-        print(f"📡 CWA 預報查詢：{town_name}")
-        url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089?Authorization={CWA_API_KEY}&locationName={town_name}"
-        res = requests.get(url, timeout=5)
+        print(f"\U0001F4E1 嘗試從中央氣象署取得明日預報：{location_name}")
+        encoded_location = quote(location_name)
+        url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089?Authorization={CWA_API_KEY}&locationName={encoded_location}"
+        res = requests.get(url, timeout=10)
         data = res.json()
-        if res.status_code == 200 and data["records"]["locations"]:
-            location_data = data["records"]["locations"][0]["location"][0]
-            elements = {e["elementName"]: e["time"][1]["elementValue"][0]["value"] for e in location_data["weatherElement"]}
-            desc = elements.get("Wx", "無預報")
-            pop = elements.get("PoP12h", "-")
-            uvi = elements.get("UVI", "-")
-            return f"{desc}，降雨機率 {pop}% ，紫外線 {uvi}（{interpret_uv_index(uvi)}）"
+
+        if res.status_code != 200 or not data.get("records"):
+            return None
+
+        tomorrow = (datetime.datetime.now() + datetime.timedelta(days=1)).date()
+
+        location = data["records"]["locations"][0]["location"][0]
+        weather_elements = location["weatherElement"]
+
+        def extract_avg(element_name):
+            for e in weather_elements:
+                if e["elementName"] == element_name:
+                    values = []
+                    for t in e["time"]:
+                        time_str = t.get("dataTime") or t.get("startTime")
+                        if not time_str:
+                            continue
+                        time_obj = datetime.datetime.fromisoformat(time_str)
+                        if time_obj.date() == tomorrow and 6 <= time_obj.hour <= 18:
+                            val = t["elementValue"][0].get("value") or t["elementValue"][0].get(element_name)
+                            try:
+                                values.append(float(val))
+                            except:
+                                continue
+                    return round(sum(values) / len(values)) if values else "-"
+            return "-"
+
+        temperature = extract_avg("溫度")
+        apparent_temp = extract_avg("體感溫度")
+        rain_prob = extract_avg("降雨機率")
+
+        return f"\U0001F321️ 溫度 {temperature}°C，體感 {apparent_temp}°C，\u2614 降雨機率 {rain_prob}%"
+
     except Exception as e:
-        print("❌ CWA 查詢失敗：", e)
-    return None
+        print("❌ fetch_tomorrow_weather_by_cwa 失敗：", e)
+        return None
 
-# 使用 CWA 查天氣（強制模式）
-def fetch_weather(lat, lon):
-    try:
-        print(f"📡 使用 CWA 查詢 ({lat}, {lon})")
-        town_name = reverse_geocode_town(lat, lon)
-        if not town_name:
-            print("⚠️ 找不到行政區，使用 fallback：平溪區")
-            town_name = "平溪區"
 
-        cwa_result = fetch_weather_by_cwa(town_name)
-        return f"📡 CWA 預報：{cwa_result}" if cwa_result else "⚠️ CWA 查無資料"
-    except Exception as e:
-        print("❌ fetch_weather 發生錯誤：", e)
-        return "⚠️ 天氣查詢失敗"
-
-# 傳 LINE 訊息
-def send_message(msg):
-    url = 'https://api.line.me/v2/bot/message/push'
-    headers = {'Authorization': f'Bearer {LINE_TOKEN}', 'Content-Type': 'application/json'}
-    payload = {'to': GROUP_ID, 'messages': [{'type': 'text', 'text': msg}]}
-    r = requests.post(url, headers=headers, json=payload)
-    print("訊息發送結果：", r.status_code, r.text)
-
-@app.route("/")
-def index():
-    return "Bot is running!"
-
-# 自動提醒行程 + 天氣
-@app.route("/run", methods=["GET"])
-def run():
-    events = get_google_calendar_events()
-    if not events:
-        return "No events for tomorrow."
-
-    lines = ["【明日行程提醒】"]
-    for event in events:
-        summary = event.get("summary", "（未命名行程）")
-        start_info = event.get("start", {})
-        location = event.get("location")
-        start_time = start_info.get("dateTime") or start_info.get("date")
-        time_str = datetime.datetime.fromisoformat(start_time).strftime('%H:%M') if "T" in start_time else "(整天)"
-
-        if location:
-            coords = geocode_location(location)
-            print(f"🧭 查詢地點：{location} → {coords}")
-            weather_info = fetch_weather(*coords) if coords else fetch_weather_by_cwa("平溪區")
-            lines.append(f"📌 {time_str}《{summary}》\n📍 地點：{location}\n🌤️ 天氣：{weather_info}\n")
-        else:
-            lines.append(f"📌 {time_str}《{summary}》（無地點）\n")
-
-    send_message("\n".join(lines))
-    return "Checked and sent."
-
-# 測試指定地點天氣
 @app.route("/debug", methods=["GET"])
-def debug_weather():
-    location = request.args.get("location", default="平溪車站")
-    coords = geocode_location(location)
-    if not coords:
-        return f"❌ 找不到地點：{location}"
-    weather = fetch_weather(*coords)
-    return (
-        f"✅ 測試地點：{location}\n"
-        f"📍 座標：{coords}\n"
-        f"🌤️ 天氣：{weather}"
-    )
+def debug():
+    location = request.args.get("location", default="信義區")
+    result = fetch_tomorrow_weather_by_cwa(location)
+    if result:
+        return f"✅ 測試地點：{location}\n🌤️ 天氣：{result}"
+    else:
+        return f"⚠️ 無法取得 {location} 明日天氣資料"
+
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(debug=True, port=5000)
