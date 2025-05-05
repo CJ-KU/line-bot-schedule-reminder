@@ -82,33 +82,56 @@ def geocode_location(location):
     return None
 
 # 用經緯度查天氣
+def interpret_uv_index(uvi):
+    try:
+        uvi = float(uvi)
+        if uvi <= 2:
+            return f"🟢 低"
+        elif uvi <= 5:
+            return f"🟡 中等"
+        elif uvi <= 7:
+            return f"🟠 高"
+        elif uvi <= 10:
+            return f"🔴 很高"
+        else:
+            return f"🟣 極高"
+    except:
+        return "❓ 未知"
+
 def fetch_weather_by_coords(lat, lon):
     api_key = os.getenv("WEATHER_API_KEY")
     if not api_key:
         return "⚠️ 無法取得 API 金鑰"
 
-    url = "https://api.openweathermap.org/data/2.5/weather"
+    url = "https://api.openweathermap.org/data/2.5/onecall"
     params = {
         "lat": lat,
         "lon": lon,
         "appid": api_key,
         "units": "metric",
-        "lang": "zh_tw"
+        "lang": "zh_tw",
+        "exclude": "minutely,hourly,alerts"
     }
 
     try:
         response = requests.get(url, params=params, timeout=5)
         data = response.json()
-        if response.status_code != 200 or "main" not in data:
-            return "⚠️ 找不到天氣資料"
 
-        description = data["weather"][0]["description"]
-        temp = data["main"]["temp"]
-        rain = data.get("rain", {}).get("1h", 0) or 0
-        return f"{description}，溫度 {temp}°C，降雨 {rain}mm"
+        if response.status_code != 200 or "daily" not in data:
+            return "⚠️ 找不到明天天氣資料"
+
+        tomorrow = data["daily"][1]
+        description = tomorrow["weather"][0]["description"]
+        temp = round(tomorrow["temp"]["day"])  # 白天平均溫度
+        pop = round(tomorrow.get("pop", 0) * 100)  # 降雨機率 (%)
+        uvi = tomorrow.get("uvi", "N/A")
+        uv_level = interpret_uv_index(uvi)
+
+        return f"{description}，溫度 {temp}°C，降雨機率 {pop}% ，紫外線 {uvi}（{uv_level}）"
     except Exception as e:
         print("❌ 天氣查詢失敗：", e)
         return "⚠️ 天氣查詢失敗"
+
 
 # 傳送 LINE 訊息
 def send_message(msg):
