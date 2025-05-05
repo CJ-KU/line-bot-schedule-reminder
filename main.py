@@ -76,15 +76,19 @@ def reverse_geocode_town(lat, lng):
         response = requests.get(url, params=params, timeout=5)
         data = response.json()
         if data["status"] == "OK":
+            level3 = None
+            level2 = None
             for comp in data["results"][0]["address_components"]:
                 if "administrative_area_level_3" in comp["types"]:
-                    return comp["long_name"]
-                elif "administrative_area_level_2" in comp["types"]:
-                    return comp["long_name"]
+                    level3 = comp["long_name"]
+                if "administrative_area_level_2" in comp["types"]:
+                    level2 = comp["long_name"]
+            return level3 or level2
         return None
     except Exception as e:
         print("❌ Reverse geocoding 失敗：", e)
         return None
+
 
 def interpret_uv_index(uvi):
     try:
