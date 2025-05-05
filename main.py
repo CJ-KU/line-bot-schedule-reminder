@@ -57,6 +57,25 @@ def geocode_location(location):
         print("地點查詢失敗：", e)
     return None
 
+# 經緯度 → 鄉鎮市區（行政區名稱）
+def get_township_from_coords(lat, lon):
+    try:
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
+        params = {
+            "latlng": f"{lat},{lon}",
+            "key": GOOGLE_MAPS_API_KEY,
+            "language": "zh-TW"
+        }
+        res = requests.get(url, params=params, timeout=5)
+        data = res.json()
+        if data["status"] == "OK":
+            for comp in data["results"][0]["address_components"]:
+                if "administrative_area_level_3" in comp["types"]:
+                    return comp["long_name"]
+    except Exception as e:
+        print("❌ 解析行政區失敗：", e)
+    return None
+
 # 紫外線解釋
 def interpret_uv_index(uvi):
     try:
@@ -98,7 +117,13 @@ def fetch_weather_by_weatherapi(location_name):
         pop = tomorrow.get("daily_chance_of_rain", "N/A")
         uvi = tomorrow.get("uv", "N/A")
 
-        return f"{desc}，氣溫 {mintemp}～{maxtemp}°C，降雨機率 {pop}% ，紫外線 {uvi}（{interpret_uv_index(uvi)}）"
+        # 若溫差過大，使用簡化顯示
+        if abs(maxtemp - mintemp) > 10:
+            temp_display = f"{maxtemp}°C（單站估值）"
+        else:
+            temp_display = f"{mintemp}～{maxtemp}°C"
+
+        return f"{desc}，氣溫 {temp_display}，降雨機率 {pop}% ，紫外線 {uvi}（{interpret_uv_index(uvi)}）"
 
     except Exception as e:
         print("❌ WeatherAPI 查詢失敗：", e)
@@ -135,7 +160,14 @@ def run():
             time_str = "(時間錯誤)"
 
         if location:
-            weather_info = fetch_weather_by_weatherapi(location)
+            coords = geocode_location(location)
+            if coords:
+                township = get_township_from_coords(*coords)
+                query_location = township or location
+                weather_info = fetch_weather_by_weatherapi(query_location)
+            else:
+                weather_info = "⚠️ 找不到明天天氣資料"
+
             lines.append(f"📌 {time_str}《{summary}》\n📍 地點：{location}\n🌤️ 天氣：{weather_info}\n")
         else:
             lines.append(f"📌 {time_str}《{summary}》（無地點）\n")
@@ -148,10 +180,17 @@ def run():
 def debug_weather():
     location = request.args.get("location", default="平溪車站")
     coords = geocode_location(location)
-    weather = fetch_weather_by_weatherapi(location)
+    if not coords:
+        return f"❌ 找不到地點：{location}"
+
+    township = get_township_from_coords(*coords)
+    query_location = township or location
+    weather = fetch_weather_by_weatherapi(query_location)
+
     return (
         f"✅ 測試地點：{location}\n"
-        f"📍 座標：{coords or '未知'}\n"
+        f"📍 座標：{coords}\n"
+        f"🏙️ 查詢地區：{query_location}\n"
         f"🌤️ 天氣：{weather}"
     )
 
