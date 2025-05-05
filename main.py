@@ -75,18 +75,26 @@ def reverse_geocode_town(lat, lng):
     if not maps_api_key:
         return None
     try:
-        url = "https://maps.googleapis.com/maps/api/geocode/json"
+        url = f"https://maps.googleapis.com/maps/api/geocode/json"
         params = {"latlng": f"{lat},{lng}", "key": maps_api_key, "language": "zh-TW"}
         response = requests.get(url, params=params, timeout=5)
         data = response.json()
         if data["status"] == "OK":
+            level3 = None
+            level2 = None
             for comp in data["results"][0]["address_components"]:
                 if "administrative_area_level_3" in comp["types"]:
-                    print(f"🏞️ 取得鄉鎮：{comp['long_name']}")
-                    return comp["long_name"]
+                    level3 = comp["long_name"]
+                elif "administrative_area_level_2" in comp["types"]:
+                    level2 = comp["long_name"]
+            town = level3 or level2
+            print(f"🏞️ 取得行政區：{town}")
+            return town
+        print("⚠️ Reverse geocode 找不到行政區")
+        return None
     except Exception as e:
         print("❌ Reverse geocoding 失敗：", e)
-    return None
+        return None
 
 # 紫外線等級轉換
 def interpret_uv_index(uvi):
