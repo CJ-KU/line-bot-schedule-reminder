@@ -57,19 +57,28 @@ def geocode_location(location):
     maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
     if not maps_api_key:
         return None
-    url = "https://maps.googleapis.com/maps/api/geocode/json"
-    params = {
-        "address": location,
-        "key": maps_api_key
+
+    # Step 1: 使用 Google Places Text Search API 搜尋地點
+    search_url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
+    search_params = {
+        "query": location,
+        "key": maps_api_key,
+        "region": "tw",  # 限定台灣區域（可依需求調整）
+        "language": "zh-TW"
     }
+
     try:
-        response = requests.get(url, params=params, timeout=5)
-        data = response.json()
-        if data["status"] == "OK":
-            loc = data["results"][0]["geometry"]["location"]
+        search_response = requests.get(search_url, params=search_params, timeout=5)
+        search_data = search_response.json()
+
+        if search_data["status"] == "OK" and len(search_data["results"]) > 0:
+            loc = search_data["results"][0]["geometry"]["location"]
             return loc["lat"], loc["lng"]
+        else:
+            print("❌ Place Text Search 失敗：", search_data.get("status"), search_data.get("error_message", ""))
     except Exception as e:
-        print("❌ 地點轉換失敗：", e)
+        print("❌ Google Places 查詢失敗：", e)
+
     return None
 
 # 用經緯度查天氣
