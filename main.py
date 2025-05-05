@@ -52,15 +52,36 @@ def get_google_calendar_events():
     ).execute()
     return events_result.get('items', [])
 
-# 模擬天氣
-def fetch_weather_for_location(location):
+# 用 Google Maps API 取得座標
+def geocode_location(location):
+    maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    if not maps_api_key:
+        return None
+    url = "https://maps.googleapis.com/maps/api/geocode/json"
+    params = {
+        "address": location,
+        "key": maps_api_key
+    }
+    try:
+        response = requests.get(url, params=params, timeout=5)
+        data = response.json()
+        if data["status"] == "OK":
+            loc = data["results"][0]["geometry"]["location"]
+            return loc["lat"], loc["lng"]
+    except Exception as e:
+        print("❌ 地點轉換失敗：", e)
+    return None
+
+# 用經緯度查天氣
+def fetch_weather_by_coords(lat, lon):
     api_key = os.getenv("WEATHER_API_KEY")
     if not api_key:
         return "⚠️ 無法取得 API 金鑰"
 
     url = "https://api.openweathermap.org/data/2.5/weather"
     params = {
-        "q": location,
+        "lat": lat,
+        "lon": lon,
         "appid": api_key,
         "units": "metric",
         "lang": "zh_tw"
@@ -70,7 +91,7 @@ def fetch_weather_for_location(location):
         response = requests.get(url, params=params, timeout=5)
         data = response.json()
         if response.status_code != 200 or "main" not in data:
-            return f"⚠️ 找不到 {location} 天氣資料"
+            return "⚠️ 找不到天氣資料"
 
         description = data["weather"][0]["description"]
         temp = data["main"]["temp"]
@@ -123,7 +144,6 @@ def run():
         start_info = event.get("start", {})
         location = event.get("location")
 
-        # 處理整天與非整天活動
         start_time = start_info.get("dateTime") or start_info.get("date")
         if "T" in start_time:
             time_str = datetime.datetime.fromisoformat(start_time).strftime('%H:%M')
@@ -131,7 +151,11 @@ def run():
             time_str = "(整天)"
 
         if location:
-            weather_info = fetch_weather_for_location(location)
+            coords = geocode_location(location)
+            if coords:
+                weather_info = fetch_weather_by_coords(*coords)
+            else:
+                weather_info = "⚠️ 地點轉換失敗"
             message_lines.append(f"- {time_str} {summary}\n  地點：{location}\n  天氣：{weather_info}")
         else:
             message_lines.append(f"- {time_str} {summary}（無地點）")
