@@ -188,12 +188,17 @@ def run():
                 weather_info = fetch_weather_by_coords(*coords)
             else:
                 weather_info = "⚠️ 地點轉換失敗"
-            message_lines.append(f"- {time_str} {summary}\n  地點：{location}\n  天氣：{weather_info}")
+            message_lines.append(
+                f"📌 {time_str}《{summary}》\n"
+                f"📍 地點：{location}\n"
+                f"🌤️ 天氣：{weather_info}\n"
+            )
         else:
-            message_lines.append(f"- {time_str} {summary}（無地點）")
+            message_lines.append(f"📌 {time_str}《{summary}》（無地點）\n")
 
     send_message("\n".join(message_lines))
     return "Checked and sent if needed."
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
