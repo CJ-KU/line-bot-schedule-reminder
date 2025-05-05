@@ -21,9 +21,11 @@ CALENDAR_ID = os.getenv("CALENDAR_ID") or 'primary'
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    body = request.get_json()
-    print(json.dumps(body, indent=2))  # 印出 webhook 內容（包含 GROUP ID）
+    body = request.get_json(force=True)
+    print("✅ Webhook received!")
+    print(json.dumps(body, indent=2))
     return "OK", 200
+
 
 def get_google_calendar_events():
     creds = service_account.Credentials.from_service_account_file(
