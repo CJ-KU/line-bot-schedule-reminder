@@ -81,20 +81,18 @@ def reverse_geocode_town(lat, lng):
         data = response.json()
         if data["status"] == "OK":
             level3 = None
-            level2 = None
             for comp in data["results"][0]["address_components"]:
                 if "administrative_area_level_3" in comp["types"]:
                     level3 = comp["long_name"]
-                elif "administrative_area_level_2" in comp["types"]:
-                    level2 = comp["long_name"]
-            town = level3 or level2
-            print(f"🏞️ 取得行政區：{town}")
-            return town
+                    break  # 找到區、鄉、鎮就停
+            print(f"🏞️ 取得行政區：{level3}")
+            return level3
         print("⚠️ Reverse geocode 找不到行政區")
         return None
     except Exception as e:
         print("❌ Reverse geocoding 失敗：", e)
         return None
+
 
 # 紫外線等級轉換
 def interpret_uv_index(uvi):
