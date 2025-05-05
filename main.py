@@ -18,21 +18,11 @@ GROUP_ID = os.getenv("GROUP_ID")
 CALENDAR_ID = os.getenv("CALENDAR_ID") or "primary"
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
-# Google Calendar service
+# 建立 Google Calendar service
 def get_calendar_service():
     credentials_info = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
     creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
     return build('calendar', 'v3', credentials=creds)
-
-# 列出日曆
-@app.route("/calendars", methods=["GET"])
-def list_calendars():
-    service = get_calendar_service()
-    calendar_list = service.calendarList().list().execute()
-    return json.dumps([
-        {"summary": c.get("summary"), "id": c.get("id")}
-        for c in calendar_list.get("items", [])
-    ], indent=2, ensure_ascii=False)
 
 # 查詢明日行程
 def get_google_calendar_events():
@@ -48,7 +38,8 @@ def get_google_calendar_events():
     ).execute()
     return events_result.get('items', [])
 
-# 取得座標（含模糊處理）
+# Google Maps Text Search
+
 def geocode_location(location):
     maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
     if not maps_api_key:
@@ -98,7 +89,40 @@ def interpret_uv_index(uvi):
     except:
         return "❓ 未知"
 
-# 天氣查詢（含明日預報與即時備援）
+# 嘗試附近地點
+
+def try_nearby_forecast(lat, lon):
+    offsets = [(-0.05, 0), (0.05, 0), (0, -0.05), (0, 0.05)]
+    for dlat, dlon in offsets:
+        alt_lat, alt_lon = lat + dlat, lon + dlon
+        print(f"🔄 嘗試附近座標：{alt_lat}, {alt_lon}")
+        forecast = fetch_weather_by_coords_single(alt_lat, alt_lon)
+        if forecast:
+            return f"📍 附近預報：{forecast}"
+    return None
+
+def fetch_weather_by_coords_single(lat, lon):
+    try:
+        url = "https://api.openweathermap.org/data/2.5/onecall"
+        params = {
+            "lat": lat, "lon": lon,
+            "appid": os.getenv("WEATHER_API_KEY"),
+            "units": "metric", "lang": "zh_tw",
+            "exclude": "minutely,hourly,alerts"
+        }
+        res = requests.get(url, params=params, timeout=5)
+        data = res.json()
+        if res.status_code == 200 and "daily" in data and len(data["daily"]) >= 2:
+            d = data["daily"][1]
+            return f"{d['weather'][0]['description']}，溫度 {round(d['temp']['day'])}°C，" + \
+                   f"降雨機率 {round(d.get('pop', 0)*100)}% ，紫外線 {d.get('uvi', 'N/A')}（{interpret_uv_index(d.get('uvi'))}）"
+        return None
+    except Exception as e:
+        print("❌ Nearby 天氣查詢失敗：", e)
+        return None
+
+# 天氣查詢
+
 def fetch_weather_by_coords(lat, lon):
     api_key = os.getenv("WEATHER_API_KEY")
     if not api_key:
@@ -122,20 +146,25 @@ def fetch_weather_by_coords(lat, lon):
             return f"{d['weather'][0]['description']}，溫度 {round(d['temp']['day'])}°C，" + \
                    f"降雨機率 {round(d.get('pop', 0)*100)}% ，紫外線 {d.get('uvi', 'N/A')}（{interpret_uv_index(d.get('uvi'))}）"
 
-        elif "current" in data:
+        print("⚠️ 無 daily 預報，嘗試附近地點")
+        nearby = try_nearby_forecast(lat, lon)
+        if nearby:
+            return nearby
+
+        if "current" in data:
             c = data["current"]
             return f"⚠️ 使用即時天氣：{c['weather'][0]['description']}，溫度 {round(c['temp'])}°C，" + \
                    f"紫外線 {c.get('uvi', 'N/A')}（{interpret_uv_index(c.get('uvi'))}）"
 
-        else:
-            print("⚠️ OpenWeather 無資料：", data)
-            return "⚠️ 找不到明天天氣資料"
+        print("⚠️ OpenWeather 無資料：", data)
+        return "⚠️ 找不到明天天氣資料"
 
     except Exception as e:
         print("❌ 天氣查詢失敗：", e)
         return "⚠️ 天氣查詢失敗"
 
-# 發送 LINE 訊息
+# 傳送 LINE 訊息
+
 def send_message(msg):
     url = 'https://api.line.me/v2/bot/message/push'
     headers = {'Authorization': f'Bearer {LINE_TOKEN}', 'Content-Type': 'application/json'}
@@ -158,7 +187,6 @@ def webhook():
 def index():
     return "Bot is running!"
 
-# 主功能：跑明日提醒
 @app.route("/run", methods=["GET"])
 def run():
     events = get_google_calendar_events()
