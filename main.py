@@ -75,19 +75,18 @@ def reverse_geocode_town(lat, lng):
         params = {"latlng": f"{lat},{lng}", "key": maps_api_key, "language": "zh-TW"}
         response = requests.get(url, params=params, timeout=5)
         data = response.json()
+
         if data["status"] == "OK":
-            level3 = None
-            level2 = None
             for comp in data["results"][0]["address_components"]:
-                if "administrative_area_level_3" in comp["types"]:
-                    level3 = comp["long_name"]
-                if "administrative_area_level_2" in comp["types"]:
-                    level2 = comp["long_name"]
-            return level3 or level2
+                if any(word in comp["long_name"] for word in ["區", "鄉", "鎮", "市"]) and "political" in comp["types"]:
+                    print(f"🏞️ Fallback 鄉鎮名：{comp['long_name']}")
+                    return comp["long_name"]
+        print("⚠️ Reverse geocode 找不到合適鄉鎮名")
         return None
     except Exception as e:
         print("❌ Reverse geocoding 失敗：", e)
         return None
+
 
 
 def interpret_uv_index(uvi):
