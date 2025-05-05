@@ -15,7 +15,6 @@ app = Flask(__name__)
 LINE_TOKEN = os.getenv("LINE_TOKEN")
 GROUP_ID = os.getenv("GROUP_ID")
 CALENDAR_ID = os.getenv("CALENDAR_ID") or "primary"
-
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
 def get_google_calendar_events():
@@ -25,16 +24,22 @@ def get_google_calendar_events():
 
     now = datetime.datetime.utcnow()
     tomorrow = now + datetime.timedelta(days=1)
+    start = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0).isoformat() + 'Z'
+    end = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day, 23, 59, 59).isoformat() + 'Z'
 
-    # ✅ 包含全天行程（使用 date 範圍）
-    start = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day).isoformat() + 'Z'
-    end = (datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day) + datetime.timedelta(days=1)).isoformat() + 'Z'
+    print(f"✅ 查詢明日行程範圍：{start} ～ {end}")
 
     events_result = service.events().list(
         calendarId=CALENDAR_ID, timeMin=start, timeMax=end,
         singleEvents=True, orderBy='startTime'
     ).execute()
-    return events_result.get('items', [])
+
+    events = events_result.get('items', [])
+
+    print("✅ Google 回傳 events：")
+    print(json.dumps(events, indent=2, ensure_ascii=False))
+
+    return events
 
 def mock_weather_for_location(location):
     return "晴，高溫 28°C，降雨 20%，紫外線：高"
@@ -78,15 +83,10 @@ def run():
     message_lines = ["【明日行程提醒】"]
     for event in events:
         summary = event.get("summary", "（未命名行程）")
-
-        # ✅ 處理 dateTime 或 date
         start = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date")
         time_str = ""
-        if start and "T" in start:  # 有時間的事件
-            time_str = datetime.datetime.fromisoformat(start.replace("Z", "")).strftime('%H:%M')
-        elif start:  # 全天事件
-            time_str = "全天"
-
+        if "T" in start:
+            time_str = datetime.datetime.fromisoformat(start).strftime('%H:%M')
         location = event.get("location")
         if location:
             weather_info = mock_weather_for_location(location)
@@ -94,7 +94,11 @@ def run():
         else:
             message_lines.append(f"- {time_str} {summary}（無地點）")
 
-    send_message("\n".join(message_lines))
+    msg = "\n".join(message_lines)
+    print("✅ 最終訊息內容：")
+    print(msg)
+
+    send_message(msg)
     return "Checked and sent if needed."
 
 if __name__ == "__main__":
