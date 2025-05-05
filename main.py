@@ -9,7 +9,6 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 load_dotenv()
-
 app = Flask(__name__)
 
 LINE_TOKEN = os.getenv("LINE_TOKEN")
@@ -17,8 +16,9 @@ GROUP_ID = os.getenv("GROUP_ID")
 CALENDAR_ID = os.getenv("CALENDAR_ID") or "primary"
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
-OPENWEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 
+# Google Calendar service
 def get_calendar_service():
     credentials_info = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
     creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
@@ -37,6 +37,7 @@ def get_google_calendar_events():
     ).execute()
     return events_result.get('items', [])
 
+# 地點查詢
 def geocode_location(location):
     try:
         url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
@@ -47,14 +48,15 @@ def geocode_location(location):
             "language": "zh-TW"
         }
         response = requests.get(url, params=params, timeout=5)
-        results = response.json().get("results", [])
+        results = response.json()["results"]
         if results:
             loc = results[0]["geometry"]["location"]
             return loc["lat"], loc["lng"]
     except Exception as e:
-        print("地點查詢失敗：", e)
+        print(f"❌ 地點查詢失敗：{e}")
     return None
 
+# 紫外線指數轉換
 def interpret_uv_index(uvi):
     try:
         uvi = float(uvi)
@@ -71,32 +73,32 @@ def interpret_uv_index(uvi):
     except:
         return "❓ 未知"
 
-def fetch_weather_by_openweather(lat, lon):
+# 查詢天氣（OpenWeatherMap）
+def fetch_weather_open(lat, lon):
     try:
         url = "https://api.openweathermap.org/data/2.5/onecall"
         params = {
-            "lat": lat,
-            "lon": lon,
-            "appid": OPENWEATHER_API_KEY,
+            "lat": lat, "lon": lon,
+            "appid": WEATHER_API_KEY,
             "units": "metric",
             "lang": "zh_tw",
-            "exclude": "current,minutely,hourly,alerts"
+            "exclude": "minutely,hourly,alerts,current"
         }
         res = requests.get(url, params=params, timeout=5)
         data = res.json()
         if res.status_code == 200 and "daily" in data and len(data["daily"]) >= 2:
-            d = data["daily"][1]  # 明日預報
+            d = data["daily"][1]
             desc = d['weather'][0]['description']
-            temp = round(d['temp']['day'])
+            temp_min = round(d['temp']['min'])
+            temp_max = round(d['temp']['max'])
             pop = round(d.get('pop', 0) * 100)
             uvi = d.get('uvi', 'N/A')
-            return f"{desc}，溫度 {temp}°C，降雨機率 {pop}% ，紫外線 {uvi}（{interpret_uv_index(uvi)}）"
-        else:
-            print("⚠️ OpenWeatherMap 回傳格式不符或無資料")
+            return f"{desc}，{temp_min}°C ~ {temp_max}°C，降雨機率 {pop}% ，紫外線 {uvi}（{interpret_uv_index(uvi)}）"
     except Exception as e:
-        print("❌ OpenWeatherMap 天氣查詢錯誤：", e)
+        print(f"❌ OpenWeatherMap 天氣查詢錯誤：{e}")
     return "⚠️ 找不到明天天氣資料"
 
+# 發送 LINE 訊息
 def send_message(msg):
     url = 'https://api.line.me/v2/bot/message/push'
     headers = {'Authorization': f'Bearer {LINE_TOKEN}', 'Content-Type': 'application/json'}
@@ -124,7 +126,7 @@ def run():
 
         if location:
             coords = geocode_location(location)
-            weather_info = fetch_weather_by_openweather(*coords) if coords else "⚠️ 找不到明天天氣資料"
+            weather_info = fetch_weather_open(*coords) if coords else "⚠️ 找不到地點資料"
             lines.append(f"📌 {time_str}《{summary}》\n📍 地點：{location}\n🌤️ 天氣：{weather_info}\n")
         else:
             lines.append(f"📌 {time_str}《{summary}》（無地點）\n")
@@ -134,11 +136,11 @@ def run():
 
 @app.route("/debug", methods=["GET"])
 def debug_weather():
-    location = request.args.get("location", default="平溪車站")
+    location = request.args.get("location", default="台北車站")
     coords = geocode_location(location)
     if not coords:
         return f"❌ 找不到地點：{location}"
-    weather = fetch_weather_by_openweather(*coords)
+    weather = fetch_weather_open(*coords)
     return (
         f"✅ 測試地點：{location}\n"
         f"📍 座標：{coords}\n"
