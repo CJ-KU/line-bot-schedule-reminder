@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 import json
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-
 from lunarcalendar import Converter, Solar
 
 load_dotenv()
@@ -19,6 +18,12 @@ GROUP_ID = os.getenv("GROUP_ID")
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 SERVICE_ACCOUNT_FILE = 'credentials.json'
 CALENDAR_ID = os.getenv("CALENDAR_ID") or 'primary'
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    body = request.get_json()
+    print(json.dumps(body, indent=2))  # 印出 webhook 內容（包含 GROUP ID）
+    return "OK", 200
 
 def get_google_calendar_events():
     creds = service_account.Credentials.from_service_account_file(
@@ -81,8 +86,3 @@ def run():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    body = request.get_json()
-    print(json.dumps(body, indent=2))  # 印出群組 ID 等 webhook 內容
-    return "OK", 200
