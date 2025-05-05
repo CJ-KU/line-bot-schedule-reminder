@@ -96,11 +96,16 @@ def run():
     message_lines = ["【明日行程提醒】"]
     for event in events:
         summary = event.get("summary", "（未命名行程）")
-        start = event.get("start", {}).get("dateTime", "")
-        time_str = ""
-        if start:
-            time_str = datetime.datetime.fromisoformat(start).strftime('%H:%M')
+        start_info = event.get("start", {})
         location = event.get("location")
+
+        # 處理整天與非整天活動
+        start_time = start_info.get("dateTime") or start_info.get("date")
+        if "T" in start_time:
+            time_str = datetime.datetime.fromisoformat(start_time).strftime('%H:%M')
+        else:
+            time_str = "(整天)"
+
         if location:
             weather_info = mock_weather_for_location(location)
             message_lines.append(f"- {time_str} {summary}\n  地點：{location}\n  天氣：{weather_info}")
