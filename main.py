@@ -177,6 +177,18 @@ def run():
 
     send_message("\n".join(lines))
     return "Checked and sent."
+@app.route("/debug", methods=["GET"])
+def debug_weather():
+    location = request.args.get("location", default="平溪車站")
+    coords = geocode_location(location)
+    if not coords:
+        return f"❌ 找不到地點：{location}"
+    weather = fetch_weather(*coords)
+    return (
+        f"✅ 測試地點：{location}\n"
+        f"📍 座標：{coords}\n"
+        f"🌤️ 天氣：{weather}"
+    )
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
