@@ -28,13 +28,16 @@ def get_calendar_service():
 # 取得明日行程（台灣時區）
 def get_google_calendar_events():
     service = get_calendar_service()
-    now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)  # 台灣時間
-    tomorrow = now + datetime.timedelta(days=1)
 
-    start = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0).isoformat() + 'Z'
-    end = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day, 23, 59, 59).isoformat() + 'Z'
+    # 使用台灣當地時間來判斷「今天」和「明天」
+    taiwan_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+    taiwan_today = datetime.datetime(taiwan_now.year, taiwan_now.month, taiwan_now.day)
+    taiwan_tomorrow = taiwan_today + datetime.timedelta(days=1)
 
-    print(f"[Debug] 查詢時間範圍（台灣時間）: {start} ～ {end}")
+    start = taiwan_tomorrow.isoformat() + 'Z'
+    end = (taiwan_tomorrow + datetime.timedelta(days=1) - datetime.timedelta(seconds=1)).isoformat() + 'Z'
+
+    print(f"[Debug] 查詢明日時間範圍（台灣時間）: {start} ～ {end}")
 
     events_result = service.events().list(
         calendarId=CALENDAR_ID,
