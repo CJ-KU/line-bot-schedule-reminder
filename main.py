@@ -29,20 +29,30 @@ def get_calendar_service():
 def get_google_calendar_events():
     service = get_calendar_service()
 
-    # 使用台灣當地時間來判斷「今天」和「明天」
+    # 取得台灣時間的「今天」日期
     taiwan_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-    taiwan_today = datetime.datetime(taiwan_now.year, taiwan_now.month, taiwan_now.day)
-    taiwan_tomorrow = taiwan_today + datetime.timedelta(days=1)
+    taiwan_today_date = taiwan_now.date()
 
-    start = taiwan_tomorrow.isoformat() + 'Z'
-    end = (taiwan_tomorrow + datetime.timedelta(days=1) - datetime.timedelta(seconds=1)).isoformat() + 'Z'
+    # 計算「明天」的日期
+    taiwan_tomorrow_date = taiwan_today_date + datetime.timedelta(days=1)
 
-    print(f"[Debug] 查詢明日時間範圍（台灣時間）: {start} ～ {end}")
+    # 設定查詢的開始和結束時間為「明天」的整天（以 UTC 時間表示）
+    start_of_tomorrow_taiwan = datetime.datetime(taiwan_tomorrow_date.year, taiwan_tomorrow_date.month, taiwan_tomorrow_date.day, 0, 0, 0)
+    end_of_tomorrow_taiwan = datetime.datetime(taiwan_tomorrow_date.year, taiwan_tomorrow_date.month, taiwan_tomorrow_date.day, 23, 59, 59)
+
+    # 將台灣時間轉換為 UTC 時間 (減去 8 小時) 並格式化為 Google Calendar API 要求的 ISO 格式
+    start = (start_of_tomorrow_taiwan - datetime.timedelta(hours=8)).isoformat() + 'Z'
+    end = (end_of_tomorrow_taiwan - datetime.timedelta(hours=8)).isoformat() + 'Z'
+
+    print(f"[Debug] 查詢明日時間範圍（UTC）: {start} ～ {end}")
+    print(f"[Debug] 明日日期（台灣時間）: {taiwan_tomorrow_date}")
 
     events_result = service.events().list(
         calendarId=CALENDAR_ID,
-        timeMin=start, timeMax=end,
-        singleEvents=True, orderBy='startTime'
+        timeMin=start,
+        timeMax=end,
+        singleEvents=True,
+        orderBy='startTime'
     ).execute()
     return events_result.get('items', [])
 
