@@ -6,6 +6,7 @@ import json
 from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from opencc import OpenCC
 
 load_dotenv()
 app = Flask(__name__)
@@ -24,13 +25,17 @@ def get_calendar_service():
     creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
     return build('calendar', 'v3', credentials=creds)
 
-# 取得明日行程
+# 取得明日行程（台灣時區）
 def get_google_calendar_events():
     service = get_calendar_service()
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)  # 台灣時間
     tomorrow = now + datetime.timedelta(days=1)
+
     start = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0).isoformat() + 'Z'
     end = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day, 23, 59, 59).isoformat() + 'Z'
+
+    print(f"[Debug] 查詢時間範圍（台灣時間）: {start} ～ {end}")
+
     events_result = service.events().list(
         calendarId=CALENDAR_ID,
         timeMin=start, timeMax=end,
@@ -93,7 +98,7 @@ def interpret_uv_index(uvi):
     except:
         return "❓ 未知"
 
-# WeatherAPI 查天氣
+# WeatherAPI 查天氣（含簡轉繁）
 def fetch_weather_by_weatherapi(location_name):
     try:
         url = "https://api.weatherapi.com/v1/forecast.json"
@@ -110,14 +115,14 @@ def fetch_weather_by_weatherapi(location_name):
             print("⚠️ WeatherAPI 無預報資料")
             return None
 
+        cc = OpenCC('s2t')  # 簡體轉繁體
         tomorrow = data["forecast"]["forecastday"][1]["day"]
-        desc = tomorrow["condition"]["text"]
+        desc = cc.convert(tomorrow["condition"]["text"])
         maxtemp = tomorrow["maxtemp_c"]
         mintemp = tomorrow["mintemp_c"]
         pop = tomorrow.get("daily_chance_of_rain", "N/A")
         uvi = tomorrow.get("uv", "N/A")
 
-        # 若溫差過大，使用簡化顯示
         if abs(maxtemp - mintemp) > 10:
             temp_display = f"{maxtemp}°C（單站估值）"
         else:
@@ -141,11 +146,12 @@ def send_message(msg):
 def index():
     return "Bot is running!"
 
-# 自動推播
+# 自動推播 /run
 @app.route("/run", methods=["GET"])
 def run():
     events = get_google_calendar_events()
     if not events:
+        send_message("【明日行程提醒】\n📭 明天沒有安排外出行程，請好好上班:))")
         return "No events for tomorrow."
 
     lines = ["【明日行程提醒】"]
@@ -175,7 +181,7 @@ def run():
     send_message("\n".join(lines))
     return "Checked and sent."
 
-# 手動測試
+# 測試 /debug?location=地點
 @app.route("/debug", methods=["GET"])
 def debug_weather():
     location = request.args.get("location", default="平溪車站")
