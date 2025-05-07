@@ -1,0 +1,13 @@
+name: 每日自動行程推播
+
+on:
+  schedule:
+    - cron: '30 9 * * 1-5'  # 每週一至週五 台灣時間 17:30（UTC+8）
+  workflow_dispatch:       # 可手動執行測試
+
+jobs:
+  trigger-linebot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 呼叫 LINE Bot /run
+        run: curl -X GET https://lunar-line-bot-1.onrender.com/run
