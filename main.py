@@ -26,11 +26,8 @@ def get_calendar_service():
 def get_target_date():
     taiwan_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
     today = taiwan_now.date()
-    weekday = today.weekday()  # 0: Monday, 1: Tuesday, ..., 4: Friday, 5: Saturday, 6: Sunday
-    if weekday == 4:  # Friday
-        return today + datetime.timedelta(days=3)
-    else:  # Other weekdays
-        return today + datetime.timedelta(days=1)
+    weekday = today.weekday()
+    return today + datetime.timedelta(days=3) if weekday == 4 else today + datetime.timedelta(days=1)
 
 def get_google_calendar_events():
     service = get_calendar_service()
@@ -93,7 +90,7 @@ def interpret_uv_index(uvi):
     except:
         return "❓ 未知"
 
-def fetch_weather_by_weatherapi(location_name, day_offset):
+def fetch_weather_by_weatherapi(location_name, day_offset, event_hour=None):
     try:
         url = "https://api.weatherapi.com/v1/forecast.json"
         params = {
@@ -107,15 +104,36 @@ def fetch_weather_by_weatherapi(location_name, day_offset):
         if "forecast" not in data:
             print("⚠️ WeatherAPI 無預報資料")
             return None
+
         cc = OpenCC('s2t')
-        forecast_day = data["forecast"]["forecastday"][day_offset]["day"]
-        desc = cc.convert(forecast_day["condition"]["text"])
-        maxtemp = forecast_day["maxtemp_c"]
-        mintemp = forecast_day["mintemp_c"]
-        pop = forecast_day.get("daily_chance_of_rain", "N/A")
-        uvi = forecast_day.get("uv", "N/A")
-        temp_display = f"{mintemp}～{maxtemp}°C" if abs(maxtemp - mintemp) <= 10 else f"{maxtemp}°C（單站估值）"
-        return f"{desc}，氣溫 {temp_display}，降雨機率 {pop}% ，紫外線 {uvi}（{interpret_uv_index(uvi)}）"
+        forecast_day = data["forecast"]["forecastday"][day_offset]
+
+        if event_hour is not None:
+            hour = min(max(event_hour, 0), 23)
+            hour_data = forecast_day["hour"][hour]
+            desc = cc.convert(hour_data["condition"]["text"])
+            temp = hour_data["temp_c"]
+            pop = hour_data.get("chance_of_rain", 0)
+            uvi = hour_data.get("uv", "N/A")
+        else:
+            max_uv = 0
+            max_temp = -999
+            max_pop = 0
+            desc = None
+            for hour_data in forecast_day["hour"]:
+                if hour_data["uv"] > max_uv:
+                    max_uv = hour_data["uv"]
+                if hour_data["temp_c"] > max_temp:
+                    max_temp = hour_data["temp_c"]
+                    desc = hour_data["condition"]["text"]
+                if hour_data.get("chance_of_rain", 0) > max_pop:
+                    max_pop = hour_data.get("chance_of_rain", 0)
+            desc = cc.convert(desc) if desc else "天氣資料不足"
+            temp = max_temp
+            pop = max_pop
+            uvi = max_uv
+
+        return f"{desc}，氣溫 {temp}°C，降雨機率 {pop}% ，紫外線 {uvi}（{interpret_uv_index(uvi)}）"
     except Exception as e:
         print("❌ WeatherAPI 查詢失敗：", e)
         return "⚠️ 找不到天氣資料"
@@ -138,27 +156,33 @@ def run():
     if not events:
         send_message(f"【{target_date.strftime('%m/%d')} 行程提醒】\n📭 {target_date.strftime('%m/%d')} 沒有安排外出行程，請好好上班:))")
         return "No events."
+
     lines = [f"【{target_date.strftime('%m/%d')} 行程提醒】"]
     for event in events:
         summary = event.get("summary", "（未命名行程）")
         start_info = event.get("start", {})
         location = event.get("location")
         start_time = start_info.get("dateTime") or start_info.get("date")
+
         try:
             time_str = datetime.datetime.fromisoformat(start_time).strftime('%H:%M') if "T" in start_time else "(整天)"
+            event_hour = datetime.datetime.fromisoformat(start_time).hour if "T" in start_time else None
         except:
             time_str = "(時間錯誤)"
+            event_hour = None
+
         if location:
             coords = geocode_location(location)
             if coords:
                 township = get_township_from_coords(*coords)
                 query_location = township or location
-                weather_info = fetch_weather_by_weatherapi(query_location, offset)
+                weather_info = fetch_weather_by_weatherapi(query_location, offset, event_hour)
             else:
                 weather_info = "⚠️ 找不到天氣資料"
             lines.append(f"📌 {time_str}《{summary}》\n📍 地點：{location}\n🌤️ 天氣：{weather_info}\n")
         else:
             lines.append(f"📌 {time_str}《{summary}》（無地點）\n")
+
     send_message("\n".join(lines))
     return "Checked and sent."
 
@@ -173,7 +197,7 @@ def debug_weather():
     taiwan_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
     today_weekday = taiwan_now.weekday()
     offset = 3 if today_weekday == 4 else 1
-    weather = fetch_weather_by_weatherapi(query_location, offset)
+    weather = fetch_weather_by_weatherapi(query_location, offset, event_hour=8)
     return (
         f"✅ 測試地點：{location}\n"
         f"📍 座標：{coords}\n"
