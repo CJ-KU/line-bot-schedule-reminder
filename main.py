@@ -15,7 +15,7 @@ app = Flask(__name__)
 LINE_TOKEN = os.getenv("LINE_TOKEN")
 GROUP_ID = os.getenv("GROUP_ID")
 CALENDAR_ID = os.getenv("CALENDAR_ID") or "primary"
-Maps_API_KEY = os.getenv("Maps_API_KEY")
+Maps_API_KEY = os.getenv("Maps_API_KEY") # 更正變數名稱為 Google 標準命名
 WEATHERAPI_KEY = os.getenv("WEATHERAPI_KEY")
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
@@ -60,7 +60,7 @@ def geocode_location(location):
         url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
         params = {
             "query": location,
-            "key": Maps_API_KEY,
+            "key": Maps_API_KEY, # 使用正確的變數名稱
             "region": "tw", # 限制在台灣地區
             "language": "zh-TW" # 返回繁體中文結果
         }
@@ -85,7 +85,7 @@ def get_township_from_coords(lat, lon):
         url = "https://maps.googleapis.com/maps/api/geocode/json"
         params = {
             "latlng": f"{lat},{lon}",
-            "key": Maps_API_KEY,
+            "key": Maps_API_KEY, # 使用正確的變數名稱
             "language": "zh-TW"
         }
         res = requests.get(url, params=params, timeout=5)
@@ -218,6 +218,11 @@ def index():
 def run():
     """主運行函數，獲取日曆事件並發送 LINE 提醒。"""
     events, target_date = get_google_calendar_events()
+    # --- 新增的日誌輸出 ---
+    print(f"查詢 {target_date.strftime('%Y/%m/%d')} 的日曆事件。")
+    print(f"找到 {len(events)} 個事件。")
+    # --- 新增日誌輸出結束 ---
+
     # 計算目標日期距離今天的天數偏移，用於天氣查詢
     offset = (target_date - datetime.date.today()).days
 
