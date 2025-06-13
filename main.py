@@ -27,10 +27,7 @@ def get_target_date():
     taiwan_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
     today = taiwan_now.date()
     weekday = today.weekday()
-    if weekday == 4:  # Friday
-        return today + datetime.timedelta(days=3)
-    else:
-        return today + datetime.timedelta(days=1)
+    return today + datetime.timedelta(days=3) if weekday == 4 else today + datetime.timedelta(days=1)
 
 def get_google_calendar_events():
     service = get_calendar_service()
@@ -64,32 +61,6 @@ def geocode_location(location):
         print("地點查詢失敗：", e)
     return None
 
-def get_township_from_coords(lat, lon):
-    try:
-        url = "https://maps.googleapis.com/maps/api/geocode/json"
-        params = {
-            "latlng": f"{lat},{lon}",
-            "key": GOOGLE_MAPS_API_KEY,
-            "language": "zh-TW"
-        }
-        res = requests.get(url, params=params, timeout=5)
-        data = res.json()
-        if data["status"] == "OK":
-            level2 = None
-            level1 = None
-            for comp in data["results"][0]["address_components"]:
-                if "administrative_area_level_2" in comp["types"]:
-                    level2 = comp["long_name"]
-                if "administrative_area_level_1" in comp["types"]:
-                    level1 = comp["long_name"]
-            if level2 and level1:
-                return f"{level1}{level2}"
-            elif level1:
-                return level1
-    except Exception as e:
-        print("❌ 解析行政區失敗：", e)
-    return None
-
 def interpret_uv_index(uvi):
     try:
         uvi = float(uvi)
@@ -101,41 +72,34 @@ def interpret_uv_index(uvi):
     except:
         return "❓ 未知"
 
-def fetch_weather_by_weatherapi(location_name, day_offset):
+def fetch_weather_by_coords(lat, lon, day_offset):
     try:
         url = "https://api.weatherapi.com/v1/forecast.json"
         params = {
             "key": WEATHERAPI_KEY,
-            "q": location_name,
+            "q": f"{lat},{lon}",
             "days": day_offset + 1,
             "lang": "zh"
         }
         res = requests.get(url, params=params, timeout=5)
         data = res.json()
-        if "forecast" not in data:
+
+        if "forecast" not in data or not data["forecast"].get("forecastday"):
             print("⚠️ WeatherAPI 無預報資料")
-            return None
+            return "⚠️ 找不到天氣資料"
+
+        target_day_forecast = data["forecast"]["forecastday"][day_offset]
+        closest_noon_forecast = min(
+            target_day_forecast["hour"],
+            key=lambda h: abs(datetime.datetime.strptime(h["time"], "%Y-%m-%d %H:%M").hour - 12)
+        )
         cc = OpenCC('s2t')
-        forecast_day = data["forecast"]["forecastday"][day_offset]["hour"]
-        if not forecast_day:
-            return "⚠️ 沒有小時資料"
-
-        # 找中午附近的時段（11~13點）
-        noon_data = None
-        for hour in forecast_day:
-            hour_time = datetime.datetime.strptime(hour["time"], "%Y-%m-%d %H:%M")
-            if hour_time.hour in [11, 12, 13]:
-                noon_data = hour
-                break
-        if not noon_data:
-            noon_data = forecast_day[12]  # fallback
-
-        desc = cc.convert(noon_data["condition"]["text"])
-        temp = noon_data["temp_c"]
-        pop = noon_data.get("chance_of_rain", "N/A")
-        uvi = noon_data.get("uv", "N/A")
-
-        return f"{desc}，約 {temp}°C，降雨機率 {pop}% ，紫外線 {uvi}（{interpret_uv_index(uvi)}）"
+        desc = cc.convert(closest_noon_forecast["condition"]["text"])
+        temp = closest_noon_forecast["temp_c"]
+        pop = closest_noon_forecast.get("chance_of_rain", "N/A")
+        uvi = closest_noon_forecast.get("uv", "N/A")
+        temp_display = f"{temp}°C"
+        return f"{desc}，約 {temp_display}，降雨機率 {pop}% ，紫外線 {uvi}（{interpret_uv_index(uvi)}）"
     except Exception as e:
         print("❌ WeatherAPI 查詢失敗：", e)
         return "⚠️ 找不到天氣資料"
@@ -155,8 +119,9 @@ def index():
 def run():
     events, target_date = get_google_calendar_events()
     offset = (target_date - datetime.date.today()).days
+
     if not events:
-        send_message(f"【{target_date.strftime('%m/%d')} 行程提醒】\n📭 沒有安排外出行程，請好好上班。")
+        send_message(f"【{target_date.strftime('%m/%d')} 行程提醒】\n📭 {target_date.strftime('%m/%d')} 沒有安排外出行程，請好好上班:))")
         return "No events."
 
     lines = [f"【{target_date.strftime('%m/%d')} 行程提醒】"]
@@ -169,17 +134,17 @@ def run():
             time_str = datetime.datetime.fromisoformat(start_time).strftime('%H:%M') if "T" in start_time else "(整天)"
         except:
             time_str = "(時間錯誤)"
+
         if location:
             coords = geocode_location(location)
             if coords:
-                township = get_township_from_coords(*coords)
-                query_location = township or location
-                weather_info = fetch_weather_by_weatherapi(query_location, offset)
+                weather_info = fetch_weather_by_coords(*coords, offset)
             else:
-                weather_info = "⚠️ 無法取得地點座標"
+                weather_info = "⚠️ 無法取得地點座標，跳過天氣查詢。"
             lines.append(f"📌 {time_str}《{summary}》\n📍 地點：{location}\n🌤️ 天氣：{weather_info}\n")
         else:
             lines.append(f"📌 {time_str}《{summary}》（無地點）\n")
+
     send_message("\n".join(lines))
     return "Checked and sent."
 
@@ -189,18 +154,12 @@ def debug_weather():
     coords = geocode_location(location)
     if not coords:
         return f"❌ 找不到地點：{location}"
-    township = get_township_from_coords(*coords)
-    query_location = township or location
-    taiwan_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-    today_weekday = taiwan_now.weekday()
-    offset = 3 if today_weekday == 4 else 1
-    weather = fetch_weather_by_weatherapi(query_location, offset)
+    offset = 3 if datetime.datetime.utcnow().weekday() == 4 else 1
+    weather = fetch_weather_by_coords(*coords, offset)
     return (
         f"✅ 測試地點：{location}\n"
         f"📍 座標：{coords}\n"
-        f"🏙️ 查詢地區：{query_location}\n"
-        f"🗓️ 今天星期：{today_weekday} (0=Mon, ..., 4=Fri)\n"
-        f"➡️ 預計查詢 {offset} 天後的天氣\n"
+        f"➡️ 預計查詢 {offset} 天後的天氣（中午時段）\n"
         f"🌤️ 天氣：{weather}"
     )
 
