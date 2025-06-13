@@ -49,21 +49,24 @@ def get_google_calendar_events():
 
 def geocode_location(location):
     try:
-        url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
         params = {
-            "query": location,
+            "address": location,
             "key": Maps_API_KEY,
-            "region": "tw",
-            "language": "zh-TW"
+            "language": "zh-TW",
+            "region": "tw"
         }
         res = requests.get(url, params=params, timeout=5)
         results = res.json().get("results", [])
         if results:
             loc = results[0]["geometry"]["location"]
             return loc["lat"], loc["lng"]
+        else:
+            print(f"⚠️ 無法從 Geocoding API 找到：{location} → 回傳：{res.json()}")
     except Exception as e:
         print("地點查詢失敗：", e)
     return None
+
 
 def get_township_from_coords(lat, lon):
     try:
