@@ -68,6 +68,8 @@ def geocode_location(location):
     return None
 
 
+
+
 def get_township_from_coords(lat, lon):
     try:
         url = "https://maps.googleapis.com/maps/api/geocode/json"
