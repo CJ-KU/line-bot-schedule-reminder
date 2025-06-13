@@ -1,8 +1,8 @@
-import os
-import requests
-import datetime
-import json
 from flask import Flask, request
+import datetime
+import requests
+import os
+import json
 from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -75,11 +75,17 @@ def get_township_from_coords(lat, lon):
         res = requests.get(url, params=params, timeout=5)
         data = res.json()
         if data["status"] == "OK":
-            level_names = ["administrative_area_level_3", "administrative_area_level_2", "administrative_area_level_1"]
-            for level in level_names:
-                for comp in data["results"][0]["address_components"]:
-                    if level in comp["types"]:
-                        return comp["long_name"]
+            level2 = None
+            level1 = None
+            for comp in data["results"][0]["address_components"]:
+                if "administrative_area_level_2" in comp["types"]:
+                    level2 = comp["long_name"]
+                if "administrative_area_level_1" in comp["types"]:
+                    level1 = comp["long_name"]
+            if level2 and level1:
+                return f"{level1}{level2}"
+            elif level1:
+                return level1
     except Exception as e:
         print("❌ 解析行政區失敗：", e)
     return None
@@ -96,8 +102,6 @@ def interpret_uv_index(uvi):
         return "❓ 未知"
 
 def fetch_weather_by_weatherapi(location_name, day_offset):
-    if not location_name:
-        return "⚠️ 無法取得地點座標，跳過天氣查詢。"
     try:
         url = "https://api.weatherapi.com/v1/forecast.json"
         params = {
@@ -168,7 +172,7 @@ def run():
 
 @app.route("/debug", methods=["GET"])
 def debug_weather():
-    location = request.args.get("location", default="平溪車站")
+    location = request.args.get("location", default="台北市信義區")
     coords = geocode_location(location)
     if not coords:
         return f"❌ 找不到地點：{location}"
